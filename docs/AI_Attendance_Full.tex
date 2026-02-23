@@ -1,0 +1,629 @@
+\\documentclass[11pt]{article}
+\\usepackage{amsmath}
+\\usepackage{amssymb}
+\\usepackage{geometry}
+\\usepackage{hyperref}
+\\usepackage{enumitem}
+\\usepackage{setspace}
+\\geometry{margin=1in}
+\\title{AI Attendance System: Full Technical Documentation}
+\\author{}
+\\date{}
+\\begin{document}
+\\maketitle
+\\tableofcontents
+\\newpage
+\\section*{AI Attendance System - Technical Documentation and Calculations}
+\\addcontentsline{toc}{section}{AI Attendance System - Technical Documentation and Calculations}
+
+This document explains how the project works end to end, with detailed calculations, thresholds, and data flow. It is intended for a literature review and technical evaluation.
+
+\\subsection*{1) System Overview}
+\\addcontentsline{toc}{subsection}{1) System Overview}
+
+The system performs attendance using face recognition. It has two main modes:
+\\begin{enumerate}[leftmargin=*]
+\\item Live scan (video frames captured every few seconds).
+\\item Image upload (single class photo).
+\\end{enumerate}
+
+High-level flow:
+\\begin{enumerate}[leftmargin=*]
+\\item Lecturer starts a session.
+\\item Student faces are captured (live or upload).
+\\item Faces are detected and aligned.
+\\item Face embeddings are computed.
+\\item Embeddings are matched against the gallery.
+\\item Matched student IDs are marked present for the active session.
+\\end{enumerate}
+
+\\subsection*{2) Data Model Summary}
+\\addcontentsline{toc}{subsection}{2) Data Model Summary}
+
+Tables (simplified):
+\\begin{enumerate}[leftmargin=*]
+\\item users: id, name, role, identifier, department
+\\item courses: id, course_code, course_title, lecturer_id, enrollment window
+\\item course_departments: course_id, department
+\\item enrollments: student_id, course_id
+\\item sessions: course_id, lecturer_id, status, start_time, end_time
+\\item attendance: session_id, student_id, timestamp, method, confidence
+\\item face_embeddings: student_id, view_type, embedding_path
+\\end{enumerate}
+
+\\subsection*{3) Face Detection and Cropping}
+\\addcontentsline{toc}{subsection}{3) Face Detection and Cropping}
+
+The system uses OpenCV YuNet (if available) or Haar cascade as fallback.
+A face bounding box is produced as (x1, y1, x2, y2). The system pads and crops:
+
+x1' = max(0, x1 - pad)
+y1' = max(0, y1 - pad)
+x2' = min(W, x2 + pad)
+y2' = min(H, y2 + pad)
+
+The cropped face is then used for embedding computation.
+
+\\subsection*{4) Blur Filtering (Image Quality)}
+\\addcontentsline{toc}{subsection}{4) Blur Filtering (Image Quality)}
+
+To avoid poor quality frames, the system computes blur using Laplacian variance:
+
+blur_score = Var( Laplacian( grayscale(face) ) )
+
+Rule:
+\\begin{itemize}[leftmargin=*]
+\\item If blur_score < blur_threshold, the face is skipped.
+\\item Current default blur_threshold for scanning is 80.
+\\end{itemize}
+
+Interpretation:
+\\begin{itemize}[leftmargin=*]
+\\item A lower blur_threshold allows blurrier images.
+\\item A higher blur_threshold requires sharper images.
+\\end{itemize}
+
+\\subsection*{5) Embedding Extraction}
+\\addcontentsline{toc}{subsection}{5) Embedding Extraction}
+
+If OpenCV SFace is available:
+\\begin{itemize}[leftmargin=*]
+\\item FaceRecognizerSF generates an embedding vector of dimension D (typically 128 or 512).
+\\item Embeddings are L2 normalized.
+\\end{itemize}
+
+Fallback:
+\\begin{itemize}[leftmargin=*]
+\\item The system uses a simple grayscale embedding (64x64 flattened and normalized).
+\\end{itemize}
+
+Let v be the raw embedding vector. L2 normalization is:
+
+\\begin{verbatim}
+v_norm = v / ( ||v||2 + 1e-8 )
+\\end{verbatim}
+
+\\subsection*{6) Gallery Construction and Vectorized Matching}
+\\addcontentsline{toc}{subsection}{6) Gallery Construction and Vectorized Matching}
+
+Each student has multiple embeddings per view (front, left, right). The gallery matrix G is built as:
+
+G = [ v1^T
+      v2^T
+      ...
+      vN^T ]
+
+where each row is a normalized embedding. The system stores metadata for each row:
+(meta[i] = (student_id, view_type)).
+
+For a query embedding q (normalized), cosine similarities are:
+
+sims = G @ q
+
+The best match is:
+
+idx = argmax(sims)
+(best_id, best_view, best_sim) = meta[idx], sims[idx]
+
+Decision rule:
+\\begin{itemize}[leftmargin=*]
+\\item If best_sim >= threshold, accept match.
+\\item Else, no match.
+\\end{itemize}
+
+Current default threshold:
+\\begin{itemize}[leftmargin=*]
+\\item threshold = 0.80
+\\end{itemize}
+
+\\subsection*{7) Threshold Effects (Detailed)}
+\\addcontentsline{toc}{subsection}{7) Threshold Effects (Detailed)}
+
+Let threshold = T.
+\\begin{itemize}[leftmargin=*]
+\\item If T is too high, false negatives increase (students missed).
+\\item If T is too low, false positives increase (wrong student matched).
+\\end{itemize}
+
+Typical comparison:
+\\begin{itemize}[leftmargin=*]
+\\item T = 0.85: strict, fewer false positives, more misses.
+\\item T = 0.80: balanced, better recall, slightly higher risk.
+\\item T = 0.75: aggressive, many matches, risk of wrong matches.
+\\end{itemize}
+
+To tune:
+\\begin{enumerate}[leftmargin=*]
+\\item Collect a validation set.
+\\item Measure FAR and FRR at multiple thresholds.
+\\item Choose T based on acceptable error tradeoff.
+\\end{enumerate}
+
+\\subsection*{8) Attendance Marking Logic}
+\\addcontentsline{toc}{subsection}{8) Attendance Marking Logic}
+
+Attendance is marked only for:
+\\begin{itemize}[leftmargin=*]
+\\item Active session
+\\item Enrolled student
+\\item Lecturer owns the course
+\\end{itemize}
+
+For each matched student_id:
+\\begin{enumerate}[leftmargin=*]
+\\item Check enrollment.
+\\item Insert attendance row.
+\\item If record already exists, skip (UniqueConstraint).
+\\end{enumerate}
+
+\\subsection*{9) Enrollment Visibility Logic}
+\\addcontentsline{toc}{subsection}{9) Enrollment Visibility Logic}
+
+A course is visible to a student if:
+\\begin{enumerate}[leftmargin=*]
+\\item Student department is in allowed_departments.
+\\item Enrollment is open (boolean).
+\\item Optional enrollment window checks:
+\\end{enumerate}
+
+Let now = current time
+Course is effectively open if:
+\\begin{itemize}[leftmargin=*]
+\\item is_open_for_enrollment = True
+\\item if enrollment_open_at exists, now >= enrollment_open_at
+\\item if enrollment_close_at exists, now <= enrollment_close_at
+\\end{itemize}
+
+\\subsection*{10) Attendance Rate Calculation}
+\\addcontentsline{toc}{subsection}{10) Attendance Rate Calculation}
+
+For a course:
+
+attendance_rate = (total_marked / (enrolled_students * total_sessions)) * 100
+
+If enrolled_students or total_sessions is 0, rate is 0.
+
+For a single session:
+
+session_rate = (marked_count / enrolled_students) * 100
+
+Example:
+\\begin{itemize}[leftmargin=*]
+\\item enrolled_students = 30
+\\item total_sessions = 4
+\\item total_marked = 90
+attendance_rate = (90 / (30*4)) * 100 = 75%
+\\end{itemize}
+
+\\subsection*{11) Benchmark Timing}
+\\addcontentsline{toc}{subsection}{11) Benchmark Timing}
+
+Benchmark endpoint reports:
+\\begin{itemize}[leftmargin=*]
+\\item decode: time to read and decode image
+\\item detect_embed: detection + embedding extraction
+\\item match: similarity matching
+\\item total: end-to-end time
+\\end{itemize}
+
+This helps compare live vs upload, and impact of thresholds.
+
+\\subsection*{12) Performance Considerations}
+\\addcontentsline{toc}{subsection}{12) Performance Considerations}
+
+Main cost is face detection + embedding. Matching is fast due to vectorization.
+If N is total embeddings and D is embedding dimension:
+\\begin{itemize}[leftmargin=*]
+\\item Matching complexity = O(N * D)
+\\item With matrix multiply, this is highly optimized.
+\\end{itemize}
+
+Reducing N can speed up:
+\\begin{itemize}[leftmargin=*]
+\\item Limit number of samples per student
+\\item Remove obsolete embeddings
+\\end{itemize}
+
+\\subsection*{13) Practical Quality Tips}
+\\addcontentsline{toc}{subsection}{13) Practical Quality Tips}
+
+\\begin{enumerate}[leftmargin=*]
+\\item Capture 3 views (front, left, right).
+\\item Use good lighting and high-resolution images.
+\\item Avoid heavy occlusion (caps, masks).
+\\item Enforce minimum face size to reduce noise.
+\\end{enumerate}
+
+\\subsection*{14) What the Frontend Shows}
+\\addcontentsline{toc}{subsection}{14) What the Frontend Shows}
+
+Lecturer portal:
+\\begin{itemize}[leftmargin=*]
+\\item Create course (code, title, enrollment window, allowed departments)
+\\item Manage course (open/close, students, reports)
+\\item Live and upload attendance
+\\item Marked students list in real-time
+\\end{itemize}
+
+Student portal:
+\\begin{itemize}[leftmargin=*]
+\\item Register with department
+\\item Enroll in eligible courses
+\\item Complete face setup before enrollment
+\\end{itemize}
+
+\\subsection*{15) Suggested Experimental Comparison}
+\\addcontentsline{toc}{subsection}{15) Suggested Experimental Comparison}
+
+\\begin{enumerate}[leftmargin=*]
+\\item Threshold sweep:
+   - Test T = 0.75, 0.80, 0.85
+   - Compare FAR and FRR
+\\end{enumerate}
+
+\\begin{enumerate}[leftmargin=*]
+\\item Blur threshold sweep:
+   - 60, 80, 100
+\\end{enumerate}
+
+\\begin{enumerate}[leftmargin=*]
+\\item Live vs upload:
+   - Compare latency and match rate
+\\end{enumerate}
+
+\\begin{enumerate}[leftmargin=*]
+\\item Lighting variation:
+   - Good, medium, poor lighting
+\\end{enumerate}
+
+\\subsection*{16) Limitations}
+\\addcontentsline{toc}{subsection}{16) Limitations}
+
+\\begin{enumerate}[leftmargin=*]
+\\item Thresholds are global and may not adapt per student.
+\\item Class photos with extreme angles reduce match rate.
+\\item Model accuracy is limited by training data quality.
+\\end{enumerate}
+
+\\subsection*{17) Suggested Future Upgrades}
+\\addcontentsline{toc}{subsection}{17) Suggested Future Upgrades}
+
+\\begin{enumerate}[leftmargin=*]
+\\item Adaptive thresholds per student based on confidence history.
+\\item Faster embedding models (MobileFaceNet) for real-time use.
+\\item Quality checks (pose, occlusion) before embedding.
+\\end{enumerate}
+
+\\subsection*{18) References (downloaded in /papers)}
+\\addcontentsline{toc}{subsection}{18) References (downloaded in /papers)}
+
+\\begin{itemize}[leftmargin=*]
+\\item YuNet: A Tiny Millisecond-level Face Detector (OpenCV)
+\\item MobileFaceNets (fast face recognition)
+\\item ArcFace (angular margin loss for embedding quality)
+\\item FaceNet (triplet loss embeddings)
+\\item MTCNN (multi-task face detection and alignment)
+\\item RetinaFace (strong face detection)
+\\item IJERT attendance papers (applied face recognition systems)
+\\end{itemize}
+
+---
+
+\\subsection*{19) Literature Review (Summaries + Gap Analysis)}
+\\addcontentsline{toc}{subsection}{19) Literature Review (Summaries + Gap Analysis)}
+
+\\subsubsection*{19.1 Face Detection}
+\\addcontentsline{toc}{subsubsection}{19.1 Face Detection}
+**YuNet (OpenCV)**
+\\begin{itemize}[leftmargin=*]
+\\item Contribution: A lightweight, millisecond‑level detector suitable for embedded and real‑time use.
+\\item Strength: Low latency and easy deployment in OpenCV.
+\\item Limitation: Detection accuracy can degrade under extreme poses or occlusion.
+\\end{itemize}
+
+**MTCNN**
+\\begin{itemize}[leftmargin=*]
+\\item Contribution: Joint detection + landmark localization via multi‑stage CNN.
+\\item Strength: Robust face detection and alignment in many lighting conditions.
+\\item Limitation: Heavier than ultra‑light detectors; slower at scale.
+\\end{itemize}
+
+**RetinaFace**
+\\begin{itemize}[leftmargin=*]
+\\item Contribution: High‑accuracy detector using dense anchors and multi‑task learning.
+\\item Strength: Very strong accuracy and robustness for detection.
+\\item Limitation: Heavier computational cost; higher latency for live use.
+\\end{itemize}
+
+**Gap Observed**
+\\begin{itemize}[leftmargin=*]
+\\item Accuracy vs speed tradeoff remains the key design choice for real‑time attendance.
+\\item A practical system can favor YuNet for speed and use better embeddings for recognition.
+\\end{itemize}
+
+\\subsubsection*{19.2 Face Embeddings / Recognition}
+\\addcontentsline{toc}{subsubsection}{19.2 Face Embeddings / Recognition}
+**FaceNet**
+\\begin{itemize}[leftmargin=*]
+\\item Contribution: Triplet loss to learn discriminative embeddings.
+\\item Strength: Strong identity separation in embedding space.
+\\item Limitation: Training is expensive; triplet mining is complex.
+\\end{itemize}
+
+**ArcFace**
+\\begin{itemize}[leftmargin=*]
+\\item Contribution: Angular margin loss improves inter‑class separability.
+\\item Strength: State‑of‑the‑art recognition accuracy; widely adopted.
+\\item Limitation: Needs strong backbone; may be slower on edge devices.
+\\end{itemize}
+
+**MobileFaceNets**
+\\begin{itemize}[leftmargin=*]
+\\item Contribution: Lightweight network for fast face verification.
+\\item Strength: Very fast on CPU and mobile; good accuracy for constrained systems.
+\\item Limitation: Slightly lower accuracy than heavier backbones on hard cases.
+\\end{itemize}
+
+**Gap Observed**
+\\begin{itemize}[leftmargin=*]
+\\item For attendance, the key is a balance: slightly lower accuracy may be acceptable if it reduces false negatives and improves speed.
+\\item Multi‑sample embeddings per student (already implemented) help recover accuracy while keeping a light model.
+\\end{itemize}
+
+\\subsubsection*{19.3 Attendance Systems (Applied)}
+\\addcontentsline{toc}{subsubsection}{19.3 Attendance Systems (Applied)}
+**IJERT Attendance Papers**
+\\begin{itemize}[leftmargin=*]
+\\item Contribution: Applied face recognition for attendance with workflow and evaluation.
+\\item Strength: Practical guidance and real‑world constraints.
+\\item Limitation: Often lack rigorous evaluation metrics and reproducibility.
+\\end{itemize}
+
+**Gap Observed**
+\\begin{itemize}[leftmargin=*]
+\\item Many applied systems do not report FAR/FRR or benchmark latency across conditions.
+\\item This project improves on that by adding a benchmark endpoint and explicit evaluation plan.
+\\end{itemize}
+
+\\subsubsection*{19.4 Literature Review Summary}
+\\addcontentsline{toc}{subsubsection}{19.4 Literature Review Summary}
+\\begin{itemize}[leftmargin=*]
+\\item **Detection**: YuNet is the best speed choice; RetinaFace is accuracy‑heavy.
+\\item **Recognition**: ArcFace is accuracy‑heavy; MobileFaceNets is speed‑optimized.
+\\item **Applied systems**: emphasize workflow but rarely quantify performance tradeoffs.
+\\end{itemize}
+
+---
+
+\\subsection*{20) System Diagrams}
+\\addcontentsline{toc}{subsection}{20) System Diagrams}
+
+\\subsubsection*{20.1 Pipeline Diagram (Text)}
+\\addcontentsline{toc}{subsubsection}{20.1 Pipeline Diagram (Text)}
+\\begin{verbatim}
+Lecturer starts session
+        |
+        v
+Capture frame/photo (live or upload)
+        |
+        v
+Face Detection -> Face Crop -> Blur Filter
+        |
+        v
+Embedding Extraction (SFace/MobileFaceNet)
+        |
+        v
+Similarity Matching (cosine, threshold)
+        |
+        v
+Matched IDs -> Enrollment Check -> Attendance Marked
+\\end{verbatim}
+
+\\subsubsection*{20.2 Data Flow Diagram (Text)}
+\\addcontentsline{toc}{subsubsection}{20.2 Data Flow Diagram (Text)}
+\\begin{verbatim}
+Users -> Courses -> CourseDepartments
+  |         |
+  v         v
+Enrollments Session
+    |          |
+    v          v
+Attendance   FaceEmbeddings
+\\end{verbatim}
+
+\\subsubsection*{20.3 Components Diagram (Text)}
+\\addcontentsline{toc}{subsubsection}{20.3 Components Diagram (Text)}
+\\begin{verbatim}
+Frontend (React)
+ - Student Register / Face Setup
+ - Lecturer Dashboard / Classes / Sessions
+ - Attendance Modal (live + upload)
+
+Backend (Flask)
+ - Auth, Courses, Enrollments, Sessions, Attendance
+ - Face detection + embedding + matching
+ - Reporting and exports
+
+Storage
+ - SQLite DB
+ - Embeddings (.npy) + face images
+\\end{verbatim}
+
+---
+
+\\subsection*{21) Evaluation Plan + Metrics Tables}
+\\addcontentsline{toc}{subsection}{21) Evaluation Plan + Metrics Tables}
+
+\\subsubsection*{21.1 Key Metrics}
+\\addcontentsline{toc}{subsubsection}{21.1 Key Metrics}
+\\begin{enumerate}[leftmargin=*]
+\\item **TAR (True Accept Rate)** = TP / (TP + FN)
+\\item **FAR (False Accept Rate)** = FP / (FP + TN)
+\\item **FRR (False Reject Rate)** = FN / (FN + TP)
+\\item **Latency** per frame/photo = decode + detect + embed + match
+\\item **End‑to‑end Attendance Accuracy** = correctly marked / total enrolled
+\\end{enumerate}
+
+\\subsubsection*{21.2 Evaluation Dataset}
+\\addcontentsline{toc}{subsubsection}{21.2 Evaluation Dataset}
+\\begin{itemize}[leftmargin=*]
+\\item Students: 20–50
+\\item Images per student: 3–5 (front/left/right + lighting variation)
+\\item Class photos: 5–10
+\\item Live frames: 50–100
+\\end{itemize}
+
+\\subsubsection*{21.3 Experimental Matrix}
+\\addcontentsline{toc}{subsubsection}{21.3 Experimental Matrix}
+
+\\begin{verbatim}
+| Experiment | Threshold | Blur Threshold | Mode | Expected Outcome |
+|-----------|-----------|----------------|------|------------------|
+| A1 | 0.75 | 60 | Upload | High recall, possible false positives |
+| A2 | 0.80 | 80 | Upload | Balanced precision/recall |
+| A3 | 0.85 | 100 | Upload | High precision, more misses |
+| B1 | 0.75 | 60 | Live | Faster but riskier matches |
+| B2 | 0.80 | 80 | Live | Balanced live performance |
+| B3 | 0.85 | 100 | Live | Strict, may miss more students |
+\\end{verbatim}
+
+\\subsubsection*{21.4 Results Template (Fill in)}
+\\addcontentsline{toc}{subsubsection}{21.4 Results Template (Fill in)}
+
+\\begin{verbatim}
+| Mode | Threshold | Blur | TAR | FAR | FRR | Avg Latency (ms) |
+|------|-----------|------|-----|-----|-----|------------------|
+| Upload | 0.80 | 80 |  |  |  |  |
+| Live | 0.80 | 80 |  |  |  |  |
+| Upload | 0.75 | 60 |  |  |  |  |
+| Live | 0.85 | 100 |  |  |  |  |
+\\end{verbatim}
+
+\\subsubsection*{21.5 Interpretation Guide}
+\\addcontentsline{toc}{subsubsection}{21.5 Interpretation Guide}
+\\begin{itemize}[leftmargin=*]
+\\item If FAR is high, increase threshold or blur threshold.
+\\item If FRR is high, decrease threshold or improve lighting/capture quality.
+\\item If latency is too high, reduce input size, limit embeddings per student, or move to lighter model.
+\\end{itemize}
+
+---
+
+\\subsection*{22) Literature Review Gap Mapping (Project Contribution)}
+\\addcontentsline{toc}{subsection}{22) Literature Review Gap Mapping (Project Contribution)}
+
+\\begin{verbatim}
+| Observed Gap | Typical Papers | This Project Response |
+|-------------|----------------|------------------------|
+| Poor latency reporting | Applied attendance papers | Added benchmark endpoint with timing |
+| Lack of threshold tradeoff analysis | Many applied systems | Threshold sweep plan and evaluation matrix |
+| Limited image quality checks | Some recognition papers | Blur threshold + capture guidance |
+| Weak reproducibility | Many applied systems | Documented pipeline + metrics + scripts |
+\\end{verbatim}
+\\newpage
+\\section*{Appendix: Core Formulas}
+\\addcontentsline{toc}{section}{Appendix: Core Formulas}
+\maketitle
+
+\section*{1. Face Crop with Padding}
+Given bounding box in pixel coordinates $(x_1,y_1,x_2,y_2)$ and padding $p$:
+\begin{align}
+ x_1' &= \max(0, x_1 - p), \\ 
+ y_1' &= \max(0, y_1 - p), \\ 
+ x_2' &= \min(W, x_2 + p), \\ 
+ y_2' &= \min(H, y_2 + p)
+\end{align}
+
+\section*{2. Blur Score (Laplacian Variance)}
+Let $I$ be the grayscale face image and $\nabla^2$ the Laplacian operator.
+\begin{equation}
+ \text{blur\_score} = \mathrm{Var}(\nabla^2 I)
+\end{equation}
+A face is rejected if:
+\begin{equation}
+ \text{blur\_score} < \tau_{\text{blur}}
+\end{equation}
+
+\section*{3. Embedding Normalization}
+Given an embedding vector $\mathbf{v} \in \mathbb{R}^D$:
+\begin{equation}
+ \hat{\mathbf{v}} = \frac{\mathbf{v}}{\|\mathbf{v}\|_2 + \epsilon}
+\end{equation}
+with small $\epsilon$ for numerical stability.
+
+\section*{4. Cosine Similarity Matching}
+Given gallery matrix $G \in \mathbb{R}^{N \times D}$ with L2-normalized rows and query $\hat{\mathbf{q}}$:
+\begin{equation}
+ \mathbf{s} = G \hat{\mathbf{q}}
+\end{equation}
+The best match index is:
+\begin{equation}
+ i^* = \arg\max_i s_i
+\end{equation}
+Acceptance rule:
+\begin{equation}
+ s_{i^*} \ge \tau_{\text{sim}}
+\end{equation}
+
+\section*{5. Threshold Tradeoff}
+Lower $\tau_{\text{sim}}$ increases recall but raises false positives. Higher $\tau_{\text{sim}}$ reduces false positives but increases false negatives.
+
+\section*{6. Identification Metrics}
+Define:
+\begin{align}
+ \text{TP} &= \text{true positives}, \\ 
+ \text{FP} &= \text{false positives}, \\ 
+ \text{FN} &= \text{false negatives}, \\ 
+ \text{TN} &= \text{true negatives}
+\end{align}
+Then:
+\begin{align}
+ \text{TAR} &= \frac{TP}{TP + FN}, \\ 
+ \text{FAR} &= \frac{FP}{FP + TN}, \\ 
+ \text{FRR} &= \frac{FN}{FN + TP}
+\end{align}
+
+\section*{7. Attendance Rate (Course Level)}
+Let $M$ be total marked attendances, $E$ enrolled students, and $S$ total sessions:
+\begin{equation}
+ \text{Attendance Rate} = \frac{M}{E \cdot S} \times 100\% 
+\end{equation}
+
+\section*{8. Attendance Rate (Session Level)}
+Let $m$ be marked students and $E$ enrolled students:
+\begin{equation}
+ \text{Session Rate} = \frac{m}{E} \times 100\%
+\end{equation}
+
+\section*{9. Enrollment Window Logic}
+Let $t$ be current time, $t_{open}$ and $t_{close}$ enrollment window bounds:
+\begin{equation}
+ \text{is\_open} = \text{flag} \wedge (t \ge t_{open}\ \text{if } t_{open} \text{ exists}) \wedge (t \le t_{close}\ \text{if } t_{close} \text{ exists})
+\end{equation}
+
+\section*{10. Benchmark Timing}
+Total latency for a frame/photo:
+\begin{equation}
+ T_{total} = T_{decode} + T_{detect+embed} + T_{match}
+\end{equation}
+\\end{document}

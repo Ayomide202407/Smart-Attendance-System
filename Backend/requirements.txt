@@ -1,0 +1,9 @@
+flask
+flask-cors
+sqlalchemy
+werkzeug
+numpy
+opencv-contrib-python
+requests
+reportlab
+gunicorn

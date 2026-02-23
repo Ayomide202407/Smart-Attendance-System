@@ -1,0 +1,21 @@
+# Ignore local database
+ignis.db
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+Backend/logs/
+
+# Generated / large artifacts
+Backend/dataset/
+Backend/embeddings/
+Backend/exports/
+
