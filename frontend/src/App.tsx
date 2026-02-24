@@ -14,7 +14,11 @@ import LecturerRegister from "./pages/auth/LecturerRegister";
 import StudentRegister from "./pages/auth/StudentRegister";
 
 import LecturerDashboard from "./pages/dashboard/LecturerDashboard";
+import LecturerOverview from "./pages/dashboard/LecturerOverview";
 import StudentDashboard from "./pages/dashboard/StudentDashboard";
+import StudentPlanner from "./pages/dashboard/StudentPlanner";
+import StudentProgress from "./pages/dashboard/StudentProgress";
+import StudentWeeklySchedule from "./pages/dashboard/StudentWeeklySchedule";
 
 import LecturerSessions from "./pages/dashboard/LecturerSessions";
 import LecturerClasses from "./pages/dashboard/LecturerClasses";
@@ -84,6 +88,14 @@ const App = () => {
               }
             />
             <Route
+              path="/dashboard/lecturer/overview"
+              element={
+                <ProtectedRoute role="lecturer">
+                  <LecturerOverview />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/dashboard/lecturer/sessions"
               element={
                 <ProtectedRoute role="lecturer">
@@ -141,6 +153,36 @@ const App = () => {
                 <ProtectedRoute role="student">
                   <FaceSetupGate>
                     <StudentDashboard />
+                  </FaceSetupGate>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/student/planner"
+              element={
+                <ProtectedRoute role="student">
+                  <FaceSetupGate>
+                    <StudentPlanner />
+                  </FaceSetupGate>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/student/progress"
+              element={
+                <ProtectedRoute role="student">
+                  <FaceSetupGate>
+                    <StudentProgress />
+                  </FaceSetupGate>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/student/weekly-schedule"
+              element={
+                <ProtectedRoute role="student">
+                  <FaceSetupGate>
+                    <StudentWeeklySchedule />
                   </FaceSetupGate>
                 </ProtectedRoute>
               }

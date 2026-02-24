@@ -1,15 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  BookOpen,
-  Building2,
-  Camera,
-  CheckCircle2,
-  Lock,
-  Sparkles,
-} from "lucide-react";
+import { CalendarDays, Clock3, MapPin, BellRing } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/lib/api";
@@ -30,29 +24,61 @@ type Course = {
   attendance_rate?: number;
 };
 
+type CourseSchedule = {
+  id: string;
+  course_id: string;
+  day_of_week: number;
+  start_time: string;
+  duration_minutes: number;
+  location?: string | null;
+  is_recurring?: boolean;
+  schedule_date?: string | null;
+};
+
 const LecturerDashboard = () => {
   const { user } = useAuth();
   const lecturerId = useMemo(() => (user?.id ? String(user.id) : null), [user?.id]);
 
   const [courses, setCourses] = useState<Course[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [schedulesByCourse, setSchedulesByCourse] = useState<Record<string, CourseSchedule[]>>({});
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => new Date());
+  const [showSchedulePopup, setShowSchedulePopup] = useState(false);
 
   async function loadCourses() {
     if (!lecturerId) {
       setCourses([]);
-      setLoading(false);
       return;
     }
-    setLoading(true);
-    setLoadError(null);
     try {
       const res: any = await apiRequest(endpoints.courses.lecturer(lecturerId));
       setCourses(res?.courses ?? []);
+    } catch {
+      setCourses([]);
+    }
+  }
+
+  async function loadSchedules() {
+    if (!lecturerId || courses.length === 0) {
+      setSchedulesByCourse({});
+      return;
+    }
+    setScheduleError(null);
+    try {
+      const results = await Promise.all(
+        courses.map((c) =>
+          apiRequest(`${endpoints.courses.scheduleList(c.id)}?lecturer_id=${encodeURIComponent(lecturerId)}`).catch(() => null)
+        )
+      );
+      const map: Record<string, CourseSchedule[]> = {};
+      results.forEach((res: any, idx) => {
+        const cid = courses[idx]?.id;
+        if (!cid) return;
+        map[cid] = res?.schedules ?? [];
+      });
+      setSchedulesByCourse(map);
     } catch (e: any) {
-      setLoadError(e?.message || "Failed to load courses");
-    } finally {
-      setLoading(false);
+      setScheduleError(e?.message || "Failed to load schedules");
     }
   }
 
@@ -61,58 +87,222 @@ const LecturerDashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lecturerId]);
 
-  const totalCourses = courses.length;
-  const openCourses = courses.filter((c) => (c.is_effectively_open ?? c.is_open_for_enrollment)).length;
-  const closedCourses = totalCourses - openCourses;
-  const coveredDepartments = useMemo(() => {
-    const set = new Set<string>();
-    courses.forEach((c) => (c.allowed_departments ?? []).forEach((d) => set.add(d)));
-    return set.size;
-  }, [courses]);
+  useEffect(() => {
+    loadSchedules().catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lecturerId, courses]);
 
-  const recentCourses = useMemo(() => {
-    return [...courses]
-      .sort((a, b) => {
-        const da = a.created_at ? Date.parse(a.created_at) : 0;
-        const db = b.created_at ? Date.parse(b.created_at) : 0;
-        return db - da;
-      })
-      .slice(0, 4);
-  }, [courses]);
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 60000);
+    return () => window.clearInterval(id);
+  }, []);
 
-  const statsCards = [
-    {
-      label: "Total Courses",
-      value: String(totalCourses),
-      icon: BookOpen,
-      change: "Created by you",
-      gradient: "gradient-primary",
-    },
-    {
-      label: "Open Enrollment",
-      value: String(openCourses),
-      icon: CheckCircle2,
-      change: `${closedCourses} closed`,
-      gradient: "gradient-secondary",
-    },
-    {
-      label: "Closed Courses",
-      value: String(closedCourses),
-      icon: Lock,
-      change: "Ready to open",
-      gradient: "gradient-accent",
-    },
-    {
-      label: "Departments Covered",
-      value: String(coveredDepartments),
-      icon: Building2,
-      change: "Across your courses",
-      gradient: "gradient-secondary",
-    },
-  ];
+  function nextOccurrence(dayOfWeek: number, startTime: string) {
+    const now = new Date();
+    const [hh, mm] = startTime.split(":").map((v) => Number(v));
+    const target = new Date(now);
+    target.setHours(hh, mm, 0, 0);
+
+    const jsDay = now.getDay(); // Sunday=0
+    const desiredJsDay = (dayOfWeek + 1) % 7; // Monday=0 -> JS=1
+    let delta = desiredJsDay - jsDay;
+    if (delta < 0 || (delta === 0 && target <= now)) {
+      delta += 7;
+    }
+    target.setDate(now.getDate() + delta);
+    return target;
+  }
+
+  function dateFromSchedule(s: CourseSchedule) {
+    if (s.is_recurring === false && s.schedule_date) {
+      const [y, m, d] = s.schedule_date.split("-").map((v) => Number(v));
+      const [hh, mm] = s.start_time.split(":").map((v) => Number(v));
+      return new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0);
+    }
+    return nextOccurrence(s.day_of_week, s.start_time);
+  }
+
+  function isSameDay(a: Date, b: Date) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+
+  const nextClass = useMemo(() => {
+    const items: Array<{
+      when: Date;
+      course_id: string;
+      course_code?: string;
+      course_title?: string;
+      location?: string | null;
+      duration_minutes?: number;
+    }> = [];
+    Object.entries(schedulesByCourse).forEach(([courseId, scheds]) => {
+      const course = courses.find((c) => c.id === courseId);
+      scheds.forEach((s) => {
+        const when = dateFromSchedule(s);
+        items.push({
+          when,
+          course_id: courseId,
+          course_code: course?.course_code,
+          course_title: course?.course_title,
+          location: s.location,
+          duration_minutes: s.duration_minutes,
+        });
+      });
+    });
+    items.sort((a, b) => a.when.getTime() - b.when.getTime());
+    return items[0] || null;
+  }, [schedulesByCourse, courses]);
+
+  const todaySchedule = useMemo(() => {
+    const today = new Date(now);
+    const dayLabel = (today.getDay() + 6) % 7; // JS Sunday=0 -> Monday=0
+    const items: Array<{
+      when: Date;
+      endsAt: Date;
+      course_id: string;
+      course_code?: string;
+      course_title?: string;
+      location?: string | null;
+      duration_minutes?: number;
+    }> = [];
+    Object.entries(schedulesByCourse).forEach(([courseId, scheds]) => {
+      const course = courses.find((c) => c.id === courseId);
+      scheds.forEach((s) => {
+        if (s.is_recurring === false && s.schedule_date) {
+          const when = dateFromSchedule(s);
+          if (isSameDay(when, today)) {
+            const duration = s.duration_minutes ?? 60;
+            const endsAt = new Date(when.getTime() + duration * 60000);
+            items.push({
+              when,
+              endsAt,
+              course_id: courseId,
+              course_code: course?.course_code,
+              course_title: course?.course_title,
+              location: s.location,
+              duration_minutes: s.duration_minutes,
+            });
+          }
+        } else if (s.day_of_week === dayLabel) {
+          const [hh, mm] = s.start_time.split(":").map((v) => Number(v));
+          const when = new Date(today);
+          when.setHours(hh || 0, mm || 0, 0, 0);
+          const duration = s.duration_minutes ?? 60;
+          const endsAt = new Date(when.getTime() + duration * 60000);
+          items.push({
+            when,
+            endsAt,
+            course_id: courseId,
+            course_code: course?.course_code,
+            course_title: course?.course_title,
+            location: s.location,
+            duration_minutes: s.duration_minutes,
+          });
+        }
+      });
+    });
+    const upcomingOrOngoing = items.filter((i) => now <= i.endsAt);
+    return upcomingOrOngoing.sort((a, b) => a.when.getTime() - b.when.getTime());
+  }, [schedulesByCourse, courses, now]);
+
+  const weekSchedule = useMemo(() => {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 7);
+    const items: Array<{
+      when: Date;
+      course_id: string;
+      course_code?: string;
+      course_title?: string;
+      location?: string | null;
+      duration_minutes?: number;
+      is_recurring?: boolean;
+    }> = [];
+    Object.entries(schedulesByCourse).forEach(([courseId, scheds]) => {
+      const course = courses.find((c) => c.id === courseId);
+      scheds.forEach((s) => {
+        const when = dateFromSchedule(s);
+        if (when >= start && when < end) {
+          items.push({
+            when,
+            course_id: courseId,
+            course_code: course?.course_code,
+            course_title: course?.course_title,
+            location: s.location,
+            duration_minutes: s.duration_minutes,
+            is_recurring: s.is_recurring !== false,
+          });
+        }
+      });
+    });
+    return items.sort((a, b) => a.when.getTime() - b.when.getTime());
+  }, [schedulesByCourse, courses, now]);
+
+  const popupItem = useMemo(() => {
+    if (!nextClass) return null;
+    const mins = Math.round((nextClass.when.getTime() - now.getTime()) / 60000);
+    const duration = nextClass.duration_minutes ?? 60;
+    const endsAt = new Date(nextClass.when.getTime() + duration * 60000);
+    const inProgress = now >= nextClass.when && now <= endsAt;
+    if (inProgress || (mins >= 0 && mins <= 15)) {
+      return { ...nextClass, mins, inProgress };
+    }
+    return null;
+  }, [nextClass, now]);
+
+  useEffect(() => {
+    if (!popupItem) return;
+    const key = `lecturer-popup-${popupItem.course_id}-${popupItem.when.toISOString()}`;
+    if (sessionStorage.getItem(key)) return;
+    setShowSchedulePopup(true);
+  }, [popupItem]);
+
+  function dismissPopup() {
+    if (!popupItem) {
+      setShowSchedulePopup(false);
+      return;
+    }
+    const key = `lecturer-popup-${popupItem.course_id}-${popupItem.when.toISOString()}`;
+    sessionStorage.setItem(key, "1");
+    setShowSchedulePopup(false);
+  }
 
   return (
     <DashboardLayout userType="lecturer">
+      <Dialog open={showSchedulePopup} onOpenChange={(open) => (!open ? dismissPopup() : null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-2xl">Class alert</DialogTitle>
+            <DialogDescription>
+              {popupItem?.inProgress
+                ? "Your class is happening now."
+                : `Your next class starts in ${popupItem?.mins ?? 0} minutes.`}
+            </DialogDescription>
+          </DialogHeader>
+          {popupItem ? (
+            <div className="rounded-2xl border bg-muted/30 p-4">
+              <p className="text-lg font-semibold">
+                {popupItem.course_title ?? "Course"}{" "}
+                {popupItem.course_code ? (
+                  <span className="text-muted-foreground">({popupItem.course_code})</span>
+                ) : null}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {popupItem.when.toLocaleString()} · {popupItem.duration_minutes ?? 60} mins
+                {popupItem.location ? ` · ${popupItem.location}` : ""}
+              </p>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={dismissPopup}>Dismiss</Button>
+            <Button asChild variant="hero">
+              <Link to="/dashboard/lecturer/sessions">Start Session</Link>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="space-y-8">
         {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -126,7 +316,7 @@ const LecturerDashboard = () => {
           </div>
           <div className="flex gap-3">
             <Button asChild variant="outline" size="lg">
-              <Link to="/dashboard/lecturer/classes">Manage Classes</Link>
+              <Link to="/dashboard/lecturer/classes#manage">Manage Classes</Link>
             </Button>
             <Button asChild variant="hero" size="lg">
               <Link to="/dashboard/lecturer/sessions">Start a Session</Link>
@@ -134,94 +324,59 @@ const LecturerDashboard = () => {
           </div>
         </div>
 
-        {/* Stats Grid */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {statsCards.map((stat) => (
-            <Card key={stat.label} className="shadow-soft hover:shadow-medium transition-shadow border-border/50">
-              <CardContent className="pt-6">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">{stat.label}</p>
-                    <p className="text-3xl font-bold text-foreground mt-1">{stat.value}</p>
-                    <div className="flex items-center gap-1 mt-2">
-                      <Sparkles className="w-4 h-4 text-secondary" />
-                      <span className="text-sm text-secondary">{stat.change}</span>
-                    </div>
-                  </div>
-                  <div className={`w-12 h-12 rounded-xl ${stat.gradient} flex items-center justify-center shadow-soft`}>
-                    <stat.icon className="w-6 h-6 text-primary-foreground" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-
-        {/* Main Content Grid */}
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Courses */}
-          <Card className="lg:col-span-2 shadow-soft border-border/50">
+          <Card className="lg:col-span-2 border-0 shadow-large bg-gradient-to-br from-white via-white to-secondary/10">
             <CardHeader>
-              <CardTitle>Course Overview</CardTitle>
-              <CardDescription>Quick snapshot of your most recent courses</CardDescription>
+              <CardTitle className="text-2xl flex items-center gap-2">
+                <CalendarDays className="w-6 h-6 text-secondary" />
+                Today's teaching schedule
+              </CardTitle>
+              <CardDescription className="text-base">
+                Big, visible schedule so you never miss a class.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              {loading ? (
-                <p className="text-sm text-muted-foreground">Loading courses...</p>
-              ) : loadError ? (
-                <p className="text-sm text-red-600">{loadError}</p>
-              ) : recentCourses.length === 0 ? (
-                <div className="rounded-xl border border-dashed p-6 text-center">
-                  <p className="text-sm text-muted-foreground">No courses yet.</p>
-                  <Button asChild variant="secondary" className="mt-3">
-                    <Link to="/dashboard/lecturer/classes">Create your first course</Link>
-                  </Button>
+              {scheduleError ? (
+                <p className="text-sm text-red-600">{scheduleError}</p>
+              ) : todaySchedule.length === 0 ? (
+                <div className="rounded-2xl border border-dashed p-6 text-center bg-white/80">
+                  <p className="text-lg font-semibold">No classes today</p>
+                  <p className="text-sm text-muted-foreground mt-1">Check the weekly view for upcoming classes.</p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {recentCourses.map((course) => (
-                    <div
-                      key={course.id}
-                      className="flex items-center justify-between gap-3 p-4 rounded-xl bg-muted/50 border border-border/50 hover:border-secondary/30 transition-colors"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div
-                          className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                            (course.is_effectively_open ?? course.is_open_for_enrollment)
-                              ? "gradient-secondary shadow-glow"
-                              : "bg-muted"
-                          }`}
-                        >
-                          <Camera
-                            className={`w-5 h-5 ${
-                              (course.is_effectively_open ?? course.is_open_for_enrollment)
-                                ? "text-secondary-foreground"
-                                : "text-muted-foreground"
-                            }`}
-                          />
-                        </div>
+                <div className="space-y-3">
+                  {todaySchedule.map((c) => (
+                    <div key={`${c.course_id}-${c.when.toISOString()}`} className="rounded-2xl border bg-white px-4 py-3 shadow-soft">
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                         <div>
-                          <p className="font-medium text-foreground">
-                            {course.course_title} <span className="text-muted-foreground">({course.course_code})</span>
+                          <p className="text-lg font-semibold">
+                            {c.course_title ?? "Course"}{" "}
+                            {c.course_code ? <span className="text-muted-foreground">({c.course_code})</span> : null}
                           </p>
-                          <p className="text-sm text-muted-foreground">
-                            {course.allowed_departments?.length ?? 0} department(s) allowed
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Enrolled: {course.enrolled_count ?? 0} · Sessions: {course.sessions_count ?? 0} ·
-                            Attendance: {course.attendance_rate ?? 0}%
-                          </p>
+                          <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1">
+                            <span className="inline-flex items-center gap-1">
+                              <Clock3 className="w-4 h-4" />
+                              {c.when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                            <span>{c.duration_minutes ?? 60} mins</span>
+                            {c.location ? (
+                              <span className="inline-flex items-center gap-1">
+                                <MapPin className="w-4 h-4" />
+                                {c.location}
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
+                        {now >= c.when && now <= c.endsAt ? (
+                          <Button asChild variant="hero" size="lg">
+                            <Link to="/dashboard/lecturer/sessions">Start Attendance</Link>
+                          </Button>
+                        ) : (
+                          <div className="text-xs text-muted-foreground">
+                            Starts at {c.when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </div>
+                        )}
                       </div>
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          course.is_effectively_open ?? course.is_open_for_enrollment
-                            ? "bg-secondary/20 text-secondary"
-                            : "bg-muted text-muted-foreground"
-                        }`}
-                      >
-                        {course.is_effectively_open ?? course.is_open_for_enrollment ? "Open" : "Closed"}
-                      </span>
                     </div>
                   ))}
                 </div>
@@ -229,75 +384,32 @@ const LecturerDashboard = () => {
             </CardContent>
           </Card>
 
-          {/* Quick Actions */}
-          <Card className="shadow-soft border-border/50">
+          <Card className="border-0 shadow-large bg-gradient-to-br from-white via-white to-accent/10">
             <CardHeader>
-              <CardTitle>Quick Actions</CardTitle>
-              <CardDescription>Shortcuts to key lecturer tools</CardDescription>
+              <CardTitle className="text-xl flex items-center gap-2">
+                <BellRing className="w-5 h-5 text-accent" />
+                This week
+              </CardTitle>
+              <CardDescription className="text-base">Next 7 days of classes</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                <div className="p-4 rounded-xl bg-muted/50 border border-border/50">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
-                      <BookOpen className="w-4 h-4 text-primary-foreground" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium text-foreground">Create or edit courses</p>
-                      <p className="text-xs text-muted-foreground">Define codes, titles, and departments.</p>
-                    </div>
-                    <Button asChild size="sm" variant="outline">
-                      <Link to="/dashboard/lecturer/classes">Open</Link>
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-xl bg-secondary/10 border border-secondary/30">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg gradient-secondary flex items-center justify-center shadow-glow">
-                      <Camera className="w-4 h-4 text-secondary-foreground" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium text-foreground">Run attendance sessions</p>
-                      <p className="text-xs text-muted-foreground">Start or end camera-based sessions.</p>
-                    </div>
-                    <Button asChild size="sm" variant="hero">
-                      <Link to="/dashboard/lecturer/sessions">Start</Link>
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-xl bg-accent/10 border border-accent/30">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg gradient-accent flex items-center justify-center">
-                      <Sparkles className="w-4 h-4 text-accent-foreground" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">Enrollment status</p>
+              {weekSchedule.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No classes scheduled this week.</p>
+              ) : (
+                <div className="space-y-2 max-h-72 overflow-auto pr-1">
+                  {weekSchedule.map((c) => (
+                    <div key={`${c.course_id}-${c.when.toISOString()}`} className="rounded-xl border bg-white/90 px-3 py-2">
+                      <p className="font-semibold text-foreground text-sm">
+                        {c.course_code ?? "Course"} · {c.when.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
+                      </p>
                       <p className="text-xs text-muted-foreground">
-                        {openCourses} course(s) open for student enrollment.
+                        {c.when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {c.duration_minutes ?? 60} mins
+                        {c.location ? ` · ${c.location}` : ""}
                       </p>
                     </div>
-                  </div>
+                  ))}
                 </div>
-
-                <div className="p-4 rounded-xl bg-muted/50 border border-border/50">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg gradient-secondary flex items-center justify-center">
-                      <Sparkles className="w-4 h-4 text-secondary-foreground" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium text-foreground">Analytics & Disputes</p>
-                      <p className="text-xs text-muted-foreground">
-                        Review AI insights and resolve disputes.
-                      </p>
-                    </div>
-                    <Button asChild size="sm" variant="outline">
-                      <Link to="/dashboard/lecturer/sessions">Open</Link>
-                    </Button>
-                  </div>
-                </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -307,3 +419,4 @@ const LecturerDashboard = () => {
 };
 
 export default LecturerDashboard;
+

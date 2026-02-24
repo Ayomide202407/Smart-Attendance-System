@@ -1,0 +1,82 @@
+digraph EduVision {
+  graph [rankdir=LR, bgcolor="white", pad="0.3", nodesep="0.4", ranksep="0.6", fontname="Helvetica"];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=10, color="#334155", fillcolor="#F8FAFC", penwidth=1.2];
+  edge [color="#475569", arrowsize=0.7, penwidth=1.1];
+
+  subgraph cluster_users {
+    label="Users";
+    color="#CBD5E1";
+    fontcolor="#334155";
+    style="rounded";
+    Student [label="Student\n- Register/Login\n- Face Setup\n- Planner\n- View Attendance", fillcolor="#ECFEFF"];
+    Lecturer [label="Lecturer\n- Register/Login\n- Create Courses\n- Start Sessions\n- Take Attendance", fillcolor="#F0FDF4"];
+  }
+
+  subgraph cluster_frontend {
+    label="Frontend (React)";
+    color="#CBD5E1";
+    style="rounded";
+    UI [label="Web UI\n- Dashboard\n- Weekly Schedule\n- Planner\n- Reports", fillcolor="#EEF2FF"];
+    Capture [label="Image Capture\n- Live Video / Photo\n- Upload Forms", fillcolor="#E0F2FE"];
+  }
+
+  subgraph cluster_backend {
+    label="Backend (Flask API)";
+    color="#CBD5E1";
+    style="rounded";
+    Auth [label="Auth & Users\n- Register/Login\n- Roles", fillcolor="#FFF7ED"];
+    Courses [label="Courses & Enrollment\n- Courses\n- Enrollment\n- Sessions", fillcolor="#FFF7ED"];
+    Embeddings [label="Face Setup\n- Embedding Upload\n- Liveness Check", fillcolor="#FEF2F2"];
+    Attendance [label="Attendance Engine\n- Face Detect\n- Match Embeddings\n- Mark Attendance", fillcolor="#FEF2F2"];
+    Reports [label="Reports & Analytics\n- Session/CSV/PDF\n- Summaries", fillcolor="#F5F3FF"];
+    Planner [label="Planner & Notifications\n- Tasks\n- Schedule Alerts", fillcolor="#F5F3FF"];
+  }
+
+  subgraph cluster_cv {
+    label="Face Engine";
+    color="#CBD5E1";
+    style="rounded";
+    CV [label="OpenCV Models\n- YuNet Detector\n- SFace Recognizer", fillcolor="#E2E8F0"];
+    Live [label="Liveness Checks\n- Blur\n- Face Ratio\n- Eye Distance", fillcolor="#E2E8F0"];
+  }
+
+  subgraph cluster_storage {
+    label="Storage";
+    color="#CBD5E1";
+    style="rounded";
+    DB [label="SQLite DB (ignis.db)\n- Users\n- Courses\n- Sessions\n- Attendance\n- Planner", fillcolor="#F1F5F9"];
+    EmbStore [label="Embeddings Files\nembeddings/students/*.npy", fillcolor="#F1F5F9"];
+    FaceStore [label="Face Images\ndataset/faces/*.jpg", fillcolor="#F1F5F9"];
+  }
+
+  Student -> UI;
+  Lecturer -> UI;
+
+  UI -> Auth [label="/auth"];
+  UI -> Courses [label="/courses /enrollments /sessions"];
+  UI -> Planner [label="/planner /notifications"];
+  UI -> Reports [label="/reports"];
+
+  Capture -> Embeddings [label="/embeddings/add"];
+  Capture -> Attendance [label="/attendance/scan-image"];
+
+  Embeddings -> CV;
+  Embeddings -> Live;
+  Attendance -> CV;
+  Attendance -> Live;
+
+  Auth -> DB;
+  Courses -> DB;
+  Planner -> DB;
+  Reports -> DB;
+  Attendance -> DB;
+  Embeddings -> DB [label="metadata"];
+
+  Embeddings -> EmbStore;
+  Embeddings -> FaceStore;
+  Attendance -> EmbStore [label="load gallery"];
+
+  Reports -> UI [label="JSON/CSV/PDF"];
+  Attendance -> UI [label="matches + confidence"];
+  Planner -> UI [label="tasks + reminders"];
+}

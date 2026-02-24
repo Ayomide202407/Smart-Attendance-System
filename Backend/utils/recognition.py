@@ -119,3 +119,25 @@ def best_match_vectorized(query_vec: np.ndarray, G: np.ndarray, meta):
     best_sim = float(sims[idx])
     sid, view = meta[idx]
     return sid, view, best_sim
+
+
+def top_k_matches(query_vec: np.ndarray, G: np.ndarray, meta, k: int = 5):
+    """
+    Return top-k matches as list of (student_id, view_type, similarity)
+    """
+    if G is None or G.size == 0:
+        return []
+
+    q = query_vec.astype(np.float32)
+    q = q / (np.linalg.norm(q) + 1e-8)
+    sims = G @ q
+    if sims.size == 0:
+        return []
+    k = max(1, min(int(k), sims.size))
+    idxs = np.argpartition(-sims, k - 1)[:k]
+    idxs = idxs[np.argsort(-sims[idxs])]
+    out = []
+    for idx in idxs:
+        sid, view = meta[int(idx)]
+        out.append((sid, view, float(sims[int(idx)])))
+    return out

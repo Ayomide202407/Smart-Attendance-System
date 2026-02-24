@@ -3,6 +3,7 @@ export const endpoints = {
   auth: {
     register: "/auth/register",
     login: "/auth/login",
+    deleteUser: "/auth/delete-user",
   },
 
   // ================= META =================
@@ -16,6 +17,12 @@ export const endpoints = {
     lecturer: (lecturerId: number | string) => `/courses/lecturer/${lecturerId}`,
     eligible: (studentId: number | string) => `/courses/eligible/${studentId}`,
     setEnrollment: "/courses/set-enrollment",
+    scheduleCreate: "/courses/schedule/create",
+    scheduleRemove: "/courses/schedule/remove",
+    scheduleUpdate: "/courses/schedule/update",
+    scheduleList: (courseId: number | string) => `/courses/${courseId}/schedule`,
+    notificationsByStudent: (studentId: number | string) => `/courses/notifications/student/${studentId}`,
+    notificationsMarkRead: "/courses/notifications/mark-read",
 
     // Lecturer view enrolled students
     students: (courseId: number | string) => `/courses/${courseId}/students`,
@@ -71,5 +78,14 @@ export const endpoints = {
     courseStudentsSummaryJSON: (courseId: number | string) => `/reports/course/${courseId}/students/summary/json`,
     courseStudentsSummaryCSV: (courseId: number | string) => `/reports/course/${courseId}/students/summary/export/csv`,
     courseAnalyticsJSON: (courseId: number | string) => `/reports/course/${courseId}/analytics/json`,
+  },
+
+  // ================= PLANNER =================
+  planner: {
+    create: "/planner/create",
+    update: "/planner/update",
+    status: "/planner/status",
+    delete: "/planner/delete",
+    listByStudent: (studentId: number | string) => `/planner/student/${studentId}`,
   },
 };

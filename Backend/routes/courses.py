@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from flask import Blueprint, request
 from sqlalchemy.exc import IntegrityError
 
 from database.engine import SessionLocal
-from database.models import User, Course, CourseDepartment, Enrollment
+from database.models import User, Course, CourseDepartment, Enrollment, CourseSchedule, ScheduleNotification
 from routes.meta import DEPARTMENTS
 
 bp = Blueprint("courses", __name__, url_prefix="/courses")
@@ -29,6 +29,43 @@ def _parse_dt(s: str):
     except Exception:
         return None
 
+def _parse_time_hhmm(s: str):
+    if not s:
+        return None
+    try:
+        parts = str(s).strip().split(":")
+        if len(parts) != 2:
+            return None
+        h = int(parts[0])
+        m = int(parts[1])
+        if h < 0 or h > 23 or m < 0 or m > 59:
+            return None
+        return f"{h:02d}:{m:02d}"
+    except Exception:
+        return None
+
+def _in_time_window(hhmm: str, start: str, end: str) -> bool:
+    if not hhmm:
+        return False
+    try:
+        h, m = map(int, hhmm.split(":"))
+        sh, sm = map(int, start.split(":"))
+        eh, em = map(int, end.split(":"))
+        val = h * 60 + m
+        lo = sh * 60 + sm
+        hi = eh * 60 + em
+        return lo <= val <= hi
+    except Exception:
+        return False
+
+def _parse_date_only(s: str):
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(str(s).strip())
+    except Exception:
+        return None
+
 def _course_open_for_enrollment(course: Course) -> bool:
     if not course.is_open_for_enrollment:
         return False
@@ -38,6 +75,32 @@ def _course_open_for_enrollment(course: Course) -> bool:
     if course.enrollment_close_at and now > course.enrollment_close_at:
         return False
     return True
+
+def _format_schedule(row: CourseSchedule):
+    return {
+        "id": row.id,
+        "course_id": row.course_id,
+        "day_of_week": row.day_of_week,
+        "start_time": row.start_time,
+        "duration_minutes": row.duration_minutes,
+        "location": row.location,
+        "is_recurring": bool(row.is_recurring),
+        "schedule_date": row.schedule_date.isoformat() if row.schedule_date else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+def _notify_students(db, course_id: str, message: str):
+    enrollments = db.query(Enrollment).filter(Enrollment.course_id == course_id).all()
+    if not enrollments:
+        return
+    rows = []
+    for e in enrollments:
+        rows.append(ScheduleNotification(
+            student_id=e.student_id,
+            course_id=course_id,
+            message=message,
+        ))
+    db.add_all(rows)
 
 @bp.post("/create")
 def create_course():
@@ -386,5 +449,347 @@ def course_students(course_id: str):
     except Exception as e:
         db.rollback()
         return _json_error(f"Fetch students failed: {str(e)}", 500)
+    finally:
+        db.close()
+
+
+@bp.post("/schedule/create")
+def create_schedule():
+    """
+    Lecturer creates a weekly schedule slot for a course.
+    POST /courses/schedule/create
+    Body JSON:
+    {
+      "lecturer_id": "...",
+      "course_id": "...",
+      "day_of_week": 0-6,  # Monday=0
+      "start_time": "HH:MM",
+      "duration_minutes": 60,
+      "location": "optional"
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    lecturer_id = str(data.get("lecturer_id") or "").strip()
+    course_id = str(data.get("course_id") or "").strip()
+    day_of_week = data.get("day_of_week")
+    start_time = _parse_time_hhmm(data.get("start_time"))
+    duration_minutes = int(data.get("duration_minutes") or 60)
+    location = str(data.get("location") or "").strip() or None
+    is_recurring = bool(data.get("is_recurring", True))
+    schedule_date = _parse_date_only(data.get("schedule_date"))
+
+    if not lecturer_id:
+        return _json_error("Missing field: lecturer_id", 400)
+    if not course_id:
+        return _json_error("Missing field: course_id", 400)
+    if is_recurring:
+        if day_of_week is None or not isinstance(day_of_week, int) or day_of_week < 0 or day_of_week > 6:
+            return _json_error("day_of_week must be an integer 0-6 (Monday=0)", 400)
+    else:
+        if schedule_date is None:
+            return _json_error("schedule_date must be YYYY-MM-DD for one-time schedules", 400)
+    if not start_time:
+        return _json_error("start_time must be HH:MM (24h)", 400)
+    if not _in_time_window(start_time, "07:00", "18:00"):
+        return _json_error("start_time must be between 07:00 and 18:00", 400)
+    if duration_minutes < 15 or duration_minutes > 300:
+        return _json_error("duration_minutes must be between 15 and 300", 400)
+
+    db = SessionLocal()
+    try:
+        lecturer = _get_user(db, lecturer_id)
+        if not lecturer or lecturer.role != "lecturer":
+            return _json_error("Lecturer not found / invalid role", 403)
+        course = db.query(Course).filter(Course.id == course_id).first()
+        if not course:
+            return _json_error("Course not found", 404)
+        if course.lecturer_id != lecturer.id:
+            return _json_error("You do not own this course", 403)
+
+        row = CourseSchedule(
+            course_id=course.id,
+            day_of_week=day_of_week if is_recurring else schedule_date.weekday(),
+            start_time=start_time,
+            duration_minutes=duration_minutes,
+            location=location,
+            is_recurring=is_recurring,
+            schedule_date=schedule_date if not is_recurring else None,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        day_label = day_names[row.day_of_week]
+        if is_recurring:
+            msg = f"New weekly schedule: {day_label} at {start_time} for {duration_minutes} mins"
+        else:
+            msg = f"New class on {schedule_date.isoformat()} ({day_label}) at {start_time} for {duration_minutes} mins"
+        if location:
+            msg += f" ({location})"
+        _notify_students(db, course.id, msg)
+        db.commit()
+
+        return {"ok": True, "schedule": _format_schedule(row)}, 201
+    except IntegrityError:
+        db.rollback()
+        return _json_error("Schedule already exists for that day/time", 409)
+    except Exception as e:
+        db.rollback()
+        return _json_error(f"Create schedule failed: {str(e)}", 500)
+    finally:
+        db.close()
+
+
+@bp.post("/schedule/remove")
+def remove_schedule():
+    """
+    Lecturer removes a schedule slot.
+    POST /courses/schedule/remove
+    Body JSON:
+    { "lecturer_id": "...", "schedule_id": "..." }
+    """
+    data = request.get_json(silent=True) or {}
+    lecturer_id = str(data.get("lecturer_id") or "").strip()
+    schedule_id = str(data.get("schedule_id") or "").strip()
+
+    if not lecturer_id:
+        return _json_error("Missing field: lecturer_id", 400)
+    if not schedule_id:
+        return _json_error("Missing field: schedule_id", 400)
+
+    db = SessionLocal()
+    try:
+        lecturer = _get_user(db, lecturer_id)
+        if not lecturer or lecturer.role != "lecturer":
+            return _json_error("Lecturer not found / invalid role", 403)
+
+        row = db.query(CourseSchedule).filter(CourseSchedule.id == schedule_id).first()
+        if not row:
+            return _json_error("Schedule not found", 404)
+
+        course = db.query(Course).filter(Course.id == row.course_id).first()
+        if not course or course.lecturer_id != lecturer.id:
+            return _json_error("You do not own this course", 403)
+
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        day_label = day_names[row.day_of_week]
+        if row.is_recurring:
+            msg = f"Schedule removed: {day_label} at {row.start_time}"
+        else:
+            date_label = row.schedule_date.isoformat() if row.schedule_date else "one-time"
+            msg = f"Schedule removed: {date_label} ({day_label}) at {row.start_time}"
+        if row.location:
+            msg += f" ({row.location})"
+        _notify_students(db, course.id, msg)
+
+        db.delete(row)
+        db.commit()
+
+        return {"ok": True, "message": "Schedule removed"}, 200
+    except Exception as e:
+        db.rollback()
+        return _json_error(f"Remove schedule failed: {str(e)}", 500)
+    finally:
+        db.close()
+
+
+@bp.post("/schedule/update")
+def update_schedule():
+    """
+    Lecturer updates a schedule slot.
+    POST /courses/schedule/update
+    Body JSON:
+    {
+      "lecturer_id": "...",
+      "schedule_id": "...",
+      "day_of_week": 0-6,
+      "start_time": "HH:MM",
+      "duration_minutes": 60,
+      "location": "optional"
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    lecturer_id = str(data.get("lecturer_id") or "").strip()
+    schedule_id = str(data.get("schedule_id") or "").strip()
+    day_of_week = data.get("day_of_week")
+    start_time = _parse_time_hhmm(data.get("start_time"))
+    duration_minutes = int(data.get("duration_minutes") or 60)
+    location = str(data.get("location") or "").strip() or None
+    is_recurring = bool(data.get("is_recurring", True))
+    schedule_date = _parse_date_only(data.get("schedule_date"))
+
+    if not lecturer_id:
+        return _json_error("Missing field: lecturer_id", 400)
+    if not schedule_id:
+        return _json_error("Missing field: schedule_id", 400)
+    if is_recurring:
+        if day_of_week is None or not isinstance(day_of_week, int) or day_of_week < 0 or day_of_week > 6:
+            return _json_error("day_of_week must be an integer 0-6 (Monday=0)", 400)
+    else:
+        if schedule_date is None:
+            return _json_error("schedule_date must be YYYY-MM-DD for one-time schedules", 400)
+    if not start_time:
+        return _json_error("start_time must be HH:MM (24h)", 400)
+    if not _in_time_window(start_time, "07:00", "18:00"):
+        return _json_error("start_time must be between 07:00 and 18:00", 400)
+    if duration_minutes < 15 or duration_minutes > 300:
+        return _json_error("duration_minutes must be between 15 and 300", 400)
+
+    db = SessionLocal()
+    try:
+        lecturer = _get_user(db, lecturer_id)
+        if not lecturer or lecturer.role != "lecturer":
+            return _json_error("Lecturer not found / invalid role", 403)
+
+        row = db.query(CourseSchedule).filter(CourseSchedule.id == schedule_id).first()
+        if not row:
+            return _json_error("Schedule not found", 404)
+
+        course = db.query(Course).filter(Course.id == row.course_id).first()
+        if not course or course.lecturer_id != lecturer.id:
+            return _json_error("You do not own this course", 403)
+
+        row.day_of_week = day_of_week if is_recurring else schedule_date.weekday()
+        row.start_time = start_time
+        row.duration_minutes = duration_minutes
+        row.location = location
+        row.is_recurring = is_recurring
+        row.schedule_date = schedule_date if not is_recurring else None
+        db.commit()
+        db.refresh(row)
+
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        day_label = day_names[row.day_of_week]
+        if is_recurring:
+            msg = f"Schedule updated: {day_label} at {start_time} for {duration_minutes} mins"
+        else:
+            msg = f"Schedule updated: {schedule_date.isoformat()} ({day_label}) at {start_time} for {duration_minutes} mins"
+        if location:
+            msg += f" ({location})"
+        _notify_students(db, course.id, msg)
+        db.commit()
+
+        return {"ok": True, "schedule": _format_schedule(row)}, 200
+    except IntegrityError:
+        db.rollback()
+        return _json_error("Schedule already exists for that day/time", 409)
+    except Exception as e:
+        db.rollback()
+        return _json_error(f"Update schedule failed: {str(e)}", 500)
+    finally:
+        db.close()
+
+
+@bp.get("/<course_id>/schedule")
+def list_schedule(course_id: str):
+    """
+    Get schedule slots for a course.
+    GET /courses/<course_id>/schedule?lecturer_id=... | ?student_id=...
+    """
+    lecturer_id = str(request.args.get("lecturer_id") or "").strip()
+    student_id = str(request.args.get("student_id") or "").strip()
+
+    if not lecturer_id and not student_id:
+        return _json_error("Provide lecturer_id or student_id", 400)
+
+    db = SessionLocal()
+    try:
+        course = db.query(Course).filter(Course.id == course_id).first()
+        if not course:
+            return _json_error("Course not found", 404)
+
+        if lecturer_id:
+            lecturer = _get_user(db, lecturer_id)
+            if not lecturer or lecturer.role != "lecturer":
+                return _json_error("Lecturer not found / invalid role", 403)
+            if course.lecturer_id != lecturer.id:
+                return _json_error("You do not own this course", 403)
+        if student_id:
+            student = _get_user(db, student_id)
+            if not student or student.role != "student":
+                return _json_error("Student not found / invalid role", 403)
+            enrolled = db.query(Enrollment).filter(Enrollment.course_id == course.id).filter(Enrollment.student_id == student.id).first()
+            if not enrolled:
+                return _json_error("Student not enrolled in this course", 403)
+
+        rows = db.query(CourseSchedule).filter(CourseSchedule.course_id == course.id).all()
+        out = [_format_schedule(r) for r in rows]
+
+        return {"ok": True, "count": len(out), "schedules": out}, 200
+    finally:
+        db.close()
+
+
+@bp.get("/notifications/student/<student_id>")
+def list_schedule_notifications(student_id: str):
+    """
+    Get schedule change notifications for a student.
+    GET /courses/notifications/student/<student_id>
+    """
+    db = SessionLocal()
+    try:
+        student = _get_user(db, student_id)
+        if not student or student.role != "student":
+            return _json_error("Student not found / invalid role", 403)
+
+        rows = (
+            db.query(ScheduleNotification)
+            .filter(ScheduleNotification.student_id == student.id)
+            .order_by(ScheduleNotification.created_at.desc())
+            .limit(30)
+            .all()
+        )
+        out = []
+        for r in rows:
+            out.append({
+                "id": r.id,
+                "course_id": r.course_id,
+                "message": r.message,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "is_read": bool(r.is_read),
+            })
+        return {"ok": True, "count": len(out), "notifications": out}, 200
+    finally:
+        db.close()
+
+
+@bp.post("/notifications/mark-read")
+def mark_notifications_read():
+    """
+    Mark notifications as read.
+    POST /courses/notifications/mark-read
+    Body JSON:
+    { "student_id": "...", "notification_id": "..." } OR { "student_id": "...", "all": true }
+    """
+    data = request.get_json(silent=True) or {}
+    student_id = str(data.get("student_id") or "").strip()
+    notification_id = str(data.get("notification_id") or "").strip()
+    mark_all = bool(data.get("all", False))
+
+    if not student_id:
+        return _json_error("Missing field: student_id", 400)
+    if not mark_all and not notification_id:
+        return _json_error("Provide notification_id or all=true", 400)
+
+    db = SessionLocal()
+    try:
+        student = _get_user(db, student_id)
+        if not student or student.role != "student":
+            return _json_error("Student not found / invalid role", 403)
+
+        if mark_all:
+            db.query(ScheduleNotification).filter(ScheduleNotification.student_id == student.id).update({"is_read": True})
+        else:
+            row = db.query(ScheduleNotification).filter(ScheduleNotification.id == notification_id).first()
+            if not row or row.student_id != student.id:
+                return _json_error("Notification not found", 404)
+            row.is_read = True
+
+        db.commit()
+        return {"ok": True, "message": "Marked as read"}, 200
+    except Exception as e:
+        db.rollback()
+        return _json_error(f"Mark read failed: {str(e)}", 500)
     finally:
         db.close()

@@ -17,6 +17,7 @@ from routes.sessions import bp as sessions_bp
 from routes.attendance import bp as attendance_bp
 from routes.embeddings import bp as embeddings_bp
 from routes.reports import reports_bp
+from routes.planner import bp as planner_bp
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -44,6 +45,7 @@ def create_app() -> Flask:
     app.register_blueprint(attendance_bp)
     app.register_blueprint(embeddings_bp)
     app.register_blueprint(reports_bp)
+    app.register_blueprint(planner_bp)
 
     @app.errorhandler(HTTPException)
     def handle_http_exception(err: HTTPException):

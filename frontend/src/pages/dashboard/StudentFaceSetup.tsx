@@ -159,54 +159,56 @@ export default function StudentFaceSetup() {
           </div>
         ))}
 
-        <div className="rounded-xl border bg-white p-5 space-y-3">
-          <div>
-            <p className="font-semibold">Liveness Challenge (Optional)</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Capture three images: center, turn left, turn right. This checks head movement.
-            </p>
-            {LIVENESS_REQUIRED && !challengePassed && (
-              <p className="text-xs text-red-600 mt-2">
-                Liveness is required before uploads. Complete the challenge to continue.
+        {LIVENESS_REQUIRED && (
+          <div className="rounded-xl border bg-white p-5 space-y-3">
+            <div>
+              <p className="font-semibold">Liveness Challenge</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Capture three images: center, turn left, turn right. This checks head movement.
               </p>
-            )}
-          </div>
+              {!challengePassed && (
+                <p className="text-xs text-red-600 mt-2">
+                  Liveness is required before uploads. Complete the challenge to continue.
+                </p>
+              )}
+            </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            {(["center", "left", "right"] as const).map((pos) => (
-              <label
-                key={pos}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border cursor-pointer hover:bg-gray-50 text-sm"
+            <div className="grid gap-3 sm:grid-cols-3">
+              {(["center", "left", "right"] as const).map((pos) => (
+                <label
+                  key={pos}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border cursor-pointer hover:bg-gray-50 text-sm"
+                >
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={challengeBusy}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      setChallengeFiles((prev) => ({ ...prev, [pos]: f }));
+                    }}
+                  />
+                  {pos.toUpperCase()} Image
+                </label>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50 disabled:opacity-60"
+                onClick={runLivenessChallenge}
+                disabled={challengeBusy}
               >
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  disabled={challengeBusy}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    setChallengeFiles((prev) => ({ ...prev, [pos]: f }));
-                  }}
-                />
-                {pos.toUpperCase()} Image
-              </label>
-            ))}
+                {challengeBusy ? "Checking..." : "Run Liveness Check"}
+              </button>
+              {challengeStatus && (
+                <span className="text-sm text-muted-foreground">{challengeStatus}</span>
+              )}
+            </div>
           </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50 disabled:opacity-60"
-              onClick={runLivenessChallenge}
-              disabled={challengeBusy}
-            >
-              {challengeBusy ? "Checking..." : "Run Liveness Check"}
-            </button>
-            {challengeStatus && (
-              <span className="text-sm text-muted-foreground">{challengeStatus}</span>
-            )}
-          </div>
-        </div>
+        )}
 
         <div className="rounded-xl border bg-gray-50 p-4 text-sm">
           <b>Tips:</b> good lighting, face centered, no cap/blur. Left/right should show your face turned.

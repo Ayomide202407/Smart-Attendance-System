@@ -8,6 +8,8 @@ from live.face_detector import FaceDetector
 from live.face_quality import is_blurry
 from live.tracker import CentroidTracker
 from live.recognizer import FaceRecognizer
+from utils.face_engine import embedding_from_detection
+from config import Config
 
 
 BACKEND_URL = "http://127.0.0.1:5000"
@@ -16,7 +18,7 @@ BACKEND_URL = "http://127.0.0.1:5000"
 def run_live_attendance(
     lecturer_id: str,
     course_id: str,
-    threshold: float = 0.8,
+    threshold: float = 0.45,
     confirm_frames: int = 2,
     cooldown_seconds: int = 30,
     recognize_every_n_frames: int = 3,
@@ -52,8 +54,10 @@ def run_live_attendance(
                 break
             frame_i += 1
 
-            faces = detector.detect(frame)
-            tracked = tracker.update(faces)
+            detections = detector.detect(frame)
+            boxes = [d["box"] for d in detections]
+            tracked = tracker.update(boxes)
+            det_by_box = {tuple(d["box"]): d for d in detections}
 
             # Reload embeddings periodically
             if time.time() - last_reload > 10:
@@ -75,6 +79,10 @@ def run_live_attendance(
             for item in tracked:
                 tid = item["track_id"]
                 x, y, w, h = item["box"]
+                det = det_by_box.get(tuple(item["box"]))
+                if det and det.get("raw") is not None:
+                    if det.get("score", 1.0) < Config.OPENCV_DET_THRESH:
+                        continue
 
                 # Capture zone filtering
                 if capture_zone:
@@ -94,8 +102,13 @@ def run_live_attendance(
                 student_id = None
                 sim = -1.0
 
-                if do_recognize:
-                    student_id, sim = recognizer.recognize(face)
+                if do_recognize and det is not None:
+                    if det.get("raw") is not None:
+                        emb = embedding_from_detection(frame, det["raw"])
+                        if emb is not None:
+                            student_id, sim = recognizer.recognize_embedding(emb)
+                    else:
+                        student_id, sim = recognizer.recognize(face)
                     if student_id:
                         track_identity[tid] = student_id
                         track_sim[tid] = sim

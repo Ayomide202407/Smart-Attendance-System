@@ -209,6 +209,8 @@ def list_embeddings(student_id: str):
         db.close()
 
 
+
+
 @bp.post("/liveness-challenge")
 def liveness_challenge():
     """

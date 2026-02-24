@@ -61,7 +61,7 @@ const Features = () => {
           {features.map((feature, index) => (
             <div
               key={feature.title}
-              className="group bg-card rounded-2xl p-8 shadow-soft hover:shadow-medium transition-all duration-300 border border-border/50 hover:border-secondary/30 animate-fade-in"
+              className="group bg-card rounded-2xl p-8 shadow-soft hover:shadow-large transition-all duration-300 border border-border/50 hover:border-secondary/30 hover:-translate-y-1 animate-fade-in"
               style={{ animationDelay: `${index * 100}ms` }}
             >
               <div className={`w-14 h-14 rounded-2xl ${feature.gradient} flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-soft`}>
@@ -75,6 +75,14 @@ const Features = () => {
               </p>
             </div>
           ))}
+        </div>
+
+        <div id="about" className="mt-20 rounded-3xl glass-card p-8 md:p-10 shadow-medium">
+          <h3 className="text-2xl md:text-3xl font-bold mb-3">Built for Real Academic Workflows</h3>
+          <p className="text-muted-foreground max-w-3xl">
+            The platform is designed around how universities actually operate: student onboarding, lecturer-led session
+            control, secure attendance events, and role-aware dashboards that reduce admin overhead.
+          </p>
         </div>
       </div>
     </section>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Hash, Lock, AlertCircle, GraduationCap } from "lucide-react";
+import { ArrowLeft, Hash, Lock, AlertCircle, GraduationCap, BarChart3, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,24 +33,27 @@ export default function LecturerLogin() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex">
-      <div className="w-full lg:w-1/2 flex flex-col justify-center px-8 lg:px-16 py-12">
+    <div className="min-h-screen bg-background flex relative overflow-hidden">
+      <div className="absolute -top-24 -right-20 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
+      <div className="absolute -bottom-24 -left-20 w-[28rem] h-[28rem] bg-secondary/10 rounded-full blur-3xl" />
+
+      <div className="w-full lg:w-1/2 flex flex-col justify-center px-6 md:px-10 lg:px-16 py-12 relative z-10">
         <Link
           to="/"
-          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-12"
+          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-10"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Home
         </Link>
 
-        <div className="max-w-md mx-auto w-full">
+        <div className="max-w-md w-full animate-slide-up">
           <div className="flex items-center gap-3 mb-2">
             <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shadow-soft">
               <GraduationCap className="w-6 h-6 text-primary-foreground" />
             </div>
             <div>
               <h1 className="text-2xl font-bold text-foreground">Lecturer Portal</h1>
-              <p className="text-sm text-muted-foreground">Login with your Staff ID</p>
+              <p className="text-sm text-muted-foreground">Sign in with your staff ID</p>
             </div>
           </div>
 
@@ -72,7 +75,7 @@ export default function LecturerLogin() {
                   placeholder="e.g., STAFF/001"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  className="pl-10 h-12"
+                  className="pl-10 h-12 bg-card/80"
                   autoComplete="off"
                   required
                 />
@@ -89,7 +92,7 @@ export default function LecturerLogin() {
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 h-12"
+                  className="pl-10 h-12 bg-card/80"
                   autoComplete="new-password"
                   required
                 />
@@ -112,12 +115,26 @@ export default function LecturerLogin() {
         </div>
       </div>
 
-      <div className="hidden lg:flex w-1/2 gradient-hero items-center justify-center p-12 relative overflow-hidden">
-        <div className="relative z-10 text-center max-w-lg">
-          <h2 className="text-3xl font-bold text-primary-foreground mb-4">Manage Attendance</h2>
-          <p className="text-primary-foreground/80 text-lg leading-relaxed">
-            Create courses, start sessions, and export reports with ease.
+      <div className="hidden lg:flex w-1/2 items-center justify-center p-10 relative z-10">
+        <div className="surface-card hover-lift animate-scale-in p-8 max-w-xl">
+          <div className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 bg-secondary/10 border border-secondary/20 mb-4">
+            <Sparkles className="w-4 h-4 text-secondary" />
+            <span className="text-xs font-medium text-secondary">Lecturer Workspace</span>
+          </div>
+          <h2 className="text-3xl font-bold mb-3">Manage Classes with Clarity</h2>
+          <p className="text-muted-foreground mb-8">
+            Run attendance sessions, track class performance, and use insights to improve delivery.
           </p>
+          <div className="space-y-3">
+            <div className="rounded-xl border border-border/60 bg-card p-4 flex items-center gap-3 hover-lift">
+              <BarChart3 className="w-5 h-5 text-secondary" />
+              <p className="text-sm">Centralized analytics for all your classes</p>
+            </div>
+            <div className="rounded-xl border border-border/60 bg-card p-4 flex items-center gap-3 hover-lift">
+              <GraduationCap className="w-5 h-5 text-accent" />
+              <p className="text-sm">Structured flows for classes and sessions</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>

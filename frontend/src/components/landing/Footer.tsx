@@ -3,10 +3,9 @@ import { Brain, Mail, MapPin, Phone } from "lucide-react";
 
 const Footer = () => {
   return (
-    <footer className="bg-primary text-primary-foreground py-16">
+    <footer id="contact" className="bg-primary text-primary-foreground py-16">
       <div className="container mx-auto px-4">
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-12">
-          {/* Brand */}
           <div className="lg:col-span-1">
             <Link to="/" className="flex items-center gap-2 mb-4">
               <div className="w-10 h-10 rounded-xl gradient-secondary flex items-center justify-center">
@@ -17,38 +16,36 @@ const Footer = () => {
               </span>
             </Link>
             <p className="text-primary-foreground/70 text-sm leading-relaxed">
-              Transforming education with AI-powered computer vision and natural language processing for universities worldwide.
+              Transforming education with computer vision and AI-first workflows for modern universities.
             </p>
           </div>
 
-          {/* Quick Links */}
           <div>
             <h4 className="font-semibold mb-4">Quick Links</h4>
             <ul className="space-y-3">
               <li>
-                <Link to="/" className="text-primary-foreground/70 hover:text-secondary transition-colors text-sm">
+                <a href="#home" className="text-primary-foreground/70 hover:text-secondary transition-colors text-sm">
                   Home
-                </Link>
+                </a>
               </li>
               <li>
-                <Link to="#features" className="text-primary-foreground/70 hover:text-secondary transition-colors text-sm">
+                <a href="#features" className="text-primary-foreground/70 hover:text-secondary transition-colors text-sm">
                   Features
-                </Link>
+                </a>
               </li>
               <li>
-                <Link to="#about" className="text-primary-foreground/70 hover:text-secondary transition-colors text-sm">
+                <a href="#about" className="text-primary-foreground/70 hover:text-secondary transition-colors text-sm">
                   About Us
-                </Link>
+                </a>
               </li>
               <li>
-                <Link to="#contact" className="text-primary-foreground/70 hover:text-secondary transition-colors text-sm">
+                <a href="#contact" className="text-primary-foreground/70 hover:text-secondary transition-colors text-sm">
                   Contact
-                </Link>
+                </a>
               </li>
             </ul>
           </div>
 
-          {/* Portals */}
           <div>
             <h4 className="font-semibold mb-4">Portals</h4>
             <ul className="space-y-3">
@@ -70,7 +67,6 @@ const Footer = () => {
             </ul>
           </div>
 
-          {/* Contact */}
           <div>
             <h4 className="font-semibold mb-4">Contact Us</h4>
             <ul className="space-y-3">
@@ -92,9 +88,7 @@ const Footer = () => {
 
         <div className="border-t border-primary-foreground/20 mt-12 pt-8">
           <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-            <p className="text-primary-foreground/60 text-sm">
-              © 2025 EduVision. All rights reserved.
-            </p>
+            <p className="text-primary-foreground/60 text-sm">Copyright 2026 EduVision. All rights reserved.</p>
             <div className="flex gap-6">
               <Link to="#" className="text-primary-foreground/60 hover:text-secondary transition-colors text-sm">
                 Privacy Policy

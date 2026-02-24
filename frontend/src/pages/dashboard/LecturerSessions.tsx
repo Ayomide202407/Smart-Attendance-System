@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/lib/api";
@@ -264,7 +265,7 @@ export default function LecturerSessions() {
         </div>
 
         {courses.length === 0 ? (
-          <div className="rounded-xl border bg-white p-6">
+          <div className="surface-card p-6">
             <p className="text-sm text-muted-foreground">
               No courses found. Create a course first in Class Management.
             </p>
@@ -278,7 +279,7 @@ export default function LecturerSessions() {
               const disputes = disputesByCourse[c.id] ?? [];
 
               return (
-                <div key={c.id} className="rounded-xl border bg-white p-5 space-y-4">
+                <div key={c.id} className="rounded-xl border border-border/60 bg-card p-5 space-y-4 hover-lift">
                   <div className="flex items-center justify-between gap-4 flex-wrap">
                     <div>
                       <p className="font-semibold">
@@ -325,13 +326,13 @@ export default function LecturerSessions() {
                   </div>
 
                   {sessions.length === 0 ? (
-                    <div className="rounded-lg border bg-gray-50 p-4">
+                    <div className="rounded-lg border border-border/60 bg-muted/40 p-4">
                       <p className="text-sm text-muted-foreground">
                         Click <b>Load Sessions</b> to see history, or <b>Start Session</b> to begin.
                       </p>
                     </div>
                   ) : (
-                    <div className="rounded-lg border bg-gray-50 p-4 overflow-auto">
+                    <div className="rounded-lg border border-border/60 bg-muted/40 p-4 overflow-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="text-left text-muted-foreground">
@@ -400,20 +401,20 @@ export default function LecturerSessions() {
                   )}
 
                   {analytics && (
-                    <div className="rounded-lg border bg-gray-50 p-4">
+                    <div className="rounded-lg border border-border/60 bg-muted/40 p-4">
                       <p className="text-sm font-semibold">Course Analytics</p>
                       <div className="grid sm:grid-cols-3 gap-3 mt-3 text-sm">
-                        <div className="rounded-lg border bg-white p-3">
+                        <div className="rounded-lg border border-border/60 bg-card p-3">
                           <p className="text-xs text-muted-foreground">Attendance Rate</p>
                           <p className="text-lg font-semibold">{analytics.totals.attendance_rate}%</p>
                         </div>
-                        <div className="rounded-lg border bg-white p-3">
+                        <div className="rounded-lg border border-border/60 bg-card p-3">
                           <p className="text-xs text-muted-foreground">Marked / Enrolled</p>
                           <p className="text-lg font-semibold">
                             {analytics.totals.marked} / {analytics.totals.enrolled}
                           </p>
                         </div>
-                        <div className="rounded-lg border bg-white p-3">
+                        <div className="rounded-lg border border-border/60 bg-card p-3">
                           <p className="text-xs text-muted-foreground">Avg Confidence</p>
                           <p className="text-lg font-semibold">
                             {analytics.average_confidence !== null ? analytics.average_confidence : "-"}
@@ -421,15 +422,15 @@ export default function LecturerSessions() {
                         </div>
                       </div>
                       <div className="mt-3 text-sm text-muted-foreground">
-                        Methods: {Object.entries(analytics.methods || {}).map(([k, v]) => `${k}: ${v}`).join(", ") || "—"}
+                        Methods: {Object.entries(analytics.methods || {}).map(([k, v]) => `${k}: ${v}`).join(", ") || "-"}
                       </div>
                       <div className="mt-1 text-sm text-muted-foreground">
-                        Disputes: {Object.entries(analytics.disputes || {}).map(([k, v]) => `${k}: ${v}`).join(", ") || "—"}
+                        Disputes: {Object.entries(analytics.disputes || {}).map(([k, v]) => `${k}: ${v}`).join(", ") || "-"}
                       </div>
                     </div>
                   )}
 
-                  <div className="rounded-lg border bg-gray-50 p-4">
+                  <div className="rounded-lg border border-border/60 bg-muted/40 p-4">
                     <p className="text-sm font-semibold">Disputes</p>
                     {disputes.length === 0 ? (
                       <p className="text-sm text-muted-foreground mt-2">No disputes found.</p>
@@ -501,68 +502,71 @@ export default function LecturerSessions() {
       )}
 
       {/* View Attendance Modal */}
-      {openSessionId && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-4xl rounded-xl bg-white border shadow-lg">
-            <div className="p-4 border-b flex items-center justify-between">
-              <div>
-                <p className="font-semibold">Attendance - Session {openSessionId.slice(0, 8)}...</p>
-                <p className="text-xs text-muted-foreground">
-                  Download: CSV/PDF buttons are available on the session row.
-                </p>
-              </div>
-              <button
-                className="px-3 py-1 rounded-lg border hover:bg-gray-50"
-                onClick={() => {
-                  setOpenSessionId(null);
-                  setReport(null);
-                }}
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="p-4">
-              {loadingReport ? (
-                <p className="text-sm text-muted-foreground">Loading attendance...</p>
-              ) : (report?.records?.length ?? 0) === 0 ? (
-                <p className="text-sm text-muted-foreground">No attendance marked yet for this session.</p>
-              ) : (
-                <div className="overflow-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-muted-foreground">
-                        <th className="py-2 pr-3">Matric/ID</th>
-                        <th className="py-2 pr-3">Student</th>
-                        <th className="py-2 pr-3">Status</th>
-                        <th className="py-2 pr-3">Method</th>
-                        <th className="py-2 pr-3">Confidence</th>
-                        <th className="py-2 pr-3">Time</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {report!.records.map((r) => (
-                        <tr key={r.attendance_id} className="border-t">
-                          <td className="py-2 pr-3">{r.student_identifier ?? "-"}</td>
-                          <td className="py-2 pr-3">{r.student_name ?? r.student_id}</td>
-                          <td className="py-2 pr-3">{r.status ?? "-"}</td>
-                          <td className="py-2 pr-3">{r.method ?? "-"}</td>
-                          <td className="py-2 pr-3">
-                            {typeof r.confidence === "number" ? r.confidence.toFixed(3) : "-"}
-                          </td>
-                          <td className="py-2 pr-3">
-                            {r.timestamp ? new Date(r.timestamp).toLocaleString() : "-"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+      {openSessionId &&
+        createPortal(
+          <div className="fixed inset-0 z-[999] bg-black/40 flex items-center justify-center p-4">
+            <div className="w-full max-w-4xl rounded-2xl bg-card border border-border/70 shadow-large">
+              <div className="p-4 border-b flex items-center justify-between">
+                <div>
+                  <p className="font-semibold">Attendance - Session {openSessionId.slice(0, 8)}...</p>
+                  <p className="text-xs text-muted-foreground">
+                    Download: CSV/PDF buttons are available on the session row.
+                  </p>
                 </div>
-              )}
+                <button
+                  className="px-3 py-1 rounded-lg border border-border/60 hover:bg-muted/60"
+                  onClick={() => {
+                    setOpenSessionId(null);
+                    setReport(null);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="p-4">
+                {loadingReport ? (
+                  <p className="text-sm text-muted-foreground">Loading attendance...</p>
+                ) : (report?.records?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-muted-foreground">No attendance marked yet for this session.</p>
+                ) : (
+                  <div className="overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-muted-foreground">
+                          <th className="py-2 pr-3">Matric/ID</th>
+                          <th className="py-2 pr-3">Student</th>
+                          <th className="py-2 pr-3">Status</th>
+                          <th className="py-2 pr-3">Method</th>
+                          <th className="py-2 pr-3">Confidence</th>
+                          <th className="py-2 pr-3">Time</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {report!.records.map((r) => (
+                          <tr key={r.attendance_id} className="border-t">
+                            <td className="py-2 pr-3">{r.student_identifier ?? "-"}</td>
+                            <td className="py-2 pr-3">{r.student_name ?? r.student_id}</td>
+                            <td className="py-2 pr-3">{r.status ?? "-"}</td>
+                            <td className="py-2 pr-3">{r.method ?? "-"}</td>
+                            <td className="py-2 pr-3">
+                              {typeof r.confidence === "number" ? r.confidence.toFixed(3) : "-"}
+                            </td>
+                            <td className="py-2 pr-3">
+                              {r.timestamp ? new Date(r.timestamp).toLocaleString() : "-"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </DashboardLayout>
   );
 }
+

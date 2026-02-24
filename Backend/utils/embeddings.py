@@ -122,3 +122,32 @@ def save_face_and_embedding(
         np.save(emb_path, emb.reshape(1, -1))
 
     return face_path, emb_path, model_name, emb
+
+
+def delete_student_face_data(student_id: str) -> dict:
+    """
+    Remove all stored face images and embeddings for a student.
+    Returns counts for files removed (best effort).
+    """
+    import shutil
+
+    emb_dir = os.path.join(EMB_DIR, student_id)
+    face_dir = os.path.join(FACES_DIR, student_id)
+
+    emb_files = 0
+    face_files = 0
+
+    if os.path.exists(emb_dir):
+        for _, _, files in os.walk(emb_dir):
+            emb_files += len(files)
+        shutil.rmtree(emb_dir, ignore_errors=True)
+
+    if os.path.exists(face_dir):
+        for _, _, files in os.walk(face_dir):
+            face_files += len(files)
+        shutil.rmtree(face_dir, ignore_errors=True)
+
+    return {
+        "embeddings_deleted": int(emb_files),
+        "faces_deleted": int(face_files),
+    }

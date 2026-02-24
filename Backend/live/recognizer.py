@@ -2,7 +2,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from utils.recognition import load_gallery_cached, best_match_vectorized
+from utils.recognition import load_gallery_cached, best_match_vectorized, top_k_matches
 from utils.face_engine import extract_best_embedding
 
 
@@ -35,6 +35,11 @@ class FaceRecognizer:
         if sim >= self.threshold:
             return sid, sim
         return None, sim
+
+    def top_k(self, embedding: np.ndarray, k: int = 5):
+        if self.G is None or len(self.meta) == 0:
+            return []
+        return top_k_matches(embedding, self.G, self.meta, k=k)
 
     def recognize(self, face_bgr) -> Tuple[Optional[str], float]:
         best = extract_best_embedding(face_bgr)

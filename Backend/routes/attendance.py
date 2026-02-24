@@ -90,6 +90,7 @@ def mark_attendance():
     course_id = str(data.get("course_id") or "").strip()
     method = str(data.get("method") or "image_upload").strip()
     confidence = data.get("confidence", None)
+    confidences = data.get("confidences", None)
     student_ids = data.get("student_ids") or []
 
     if not lecturer_id:
@@ -148,13 +149,19 @@ def mark_attendance():
                 skipped.append({"student_id": student.id, "reason": "cooldown_active"})
                 continue
 
+            conf_value = None
+            if isinstance(confidences, dict):
+                conf_value = confidences.get(student.id)
+            elif confidence is not None:
+                conf_value = confidence
+
             record = Attendance(
                 session_id=active_session.id,
                 student_id=student.id,
                 timestamp=datetime.utcnow(),
                 status="present",
                 method=method,
-                confidence=float(confidence) if confidence is not None else None,
+                confidence=float(conf_value) if conf_value is not None else None,
             )
 
             db.add(record)
@@ -241,6 +248,15 @@ def scan_image():
     course_id = (request.form.get("course_id") or "").strip()
     threshold = float(request.form.get("threshold") or 0.4)
     blur_threshold = float(request.form.get("blur_threshold") or Config.BLUR_THRESHOLD)
+    debug = str(request.form.get("debug") or "").strip().lower() in ("1", "true", "yes", "on")
+    debug_top_k = int(request.form.get("debug_top_k") or 5)
+    liveness_override = str(request.form.get("liveness") or "").strip().lower()
+    if liveness_override in ("1", "true", "yes", "on"):
+        liveness_enabled = True
+    elif liveness_override in ("0", "false", "no", "off"):
+        liveness_enabled = False
+    else:
+        liveness_enabled = Config.LIVENESS_ENABLED and Config.LIVENESS_ATTENDANCE_ENABLED
 
     if not lecturer_id:
         return _json_error("Missing form field: lecturer_id", 400)
@@ -280,30 +296,91 @@ def scan_image():
 
         matched_ids = set()
         matches = []
+        debug_faces = [] if debug else None
 
         for emb, bbox, det_score, landmarks in faces:
             if det_score < Config.OPENCV_DET_THRESH:
+                if debug:
+                    debug_faces.append({
+                        "bbox": bbox,
+                        "det_score": float(det_score),
+                        "skipped_reason": "low_det_score",
+                    })
                 continue
             face = crop_face_xyxy(image, bbox)
             if blur_score(face) < blur_threshold:
+                if debug:
+                    debug_faces.append({
+                        "bbox": bbox,
+                        "det_score": float(det_score),
+                        "blur_score": float(blur_score(face)),
+                        "skipped_reason": "blur",
+                    })
                 continue
 
-            liveness = evaluate_liveness(image, bbox, landmarks) if Config.LIVENESS_ENABLED else {"checked": False}
-            if Config.LIVENESS_ENABLED:
+            liveness = evaluate_liveness(image, bbox, landmarks) if liveness_enabled else {"checked": False}
+            if liveness_enabled:
                 if not liveness.get("checked") and Config.LIVENESS_REQUIRED:
+                    if debug:
+                        debug_faces.append({
+                            "bbox": bbox,
+                            "det_score": float(det_score),
+                            "blur_score": float(blur_score(face)),
+                            "liveness": liveness,
+                            "skipped_reason": "liveness_unavailable",
+                        })
                     continue
                 if liveness.get("checked") and not liveness.get("pass"):
+                    if debug:
+                        debug_faces.append({
+                            "bbox": bbox,
+                            "det_score": float(det_score),
+                            "blur_score": float(blur_score(face)),
+                            "liveness": liveness,
+                            "skipped_reason": "liveness_failed",
+                        })
                     continue
 
             sid, sim = recognizer.recognize_embedding(emb)
             if not sid:
+                if debug:
+                    debug_faces.append({
+                        "bbox": bbox,
+                        "det_score": float(det_score),
+                        "blur_score": float(blur_score(face)),
+                        "liveness": liveness,
+                        "top_k": recognizer.top_k(emb, k=debug_top_k),
+                        "skipped_reason": "below_threshold",
+                    })
                 continue
 
             # only accept enrolled students
             if not _is_enrolled(db, sid, course.id):
+                if debug:
+                    debug_faces.append({
+                        "bbox": bbox,
+                        "det_score": float(det_score),
+                        "blur_score": float(blur_score(face)),
+                        "liveness": liveness,
+                        "top_k": recognizer.top_k(emb, k=debug_top_k),
+                        "skipped_reason": "not_enrolled",
+                        "matched_student_id": sid,
+                        "similarity": float(sim),
+                    })
                 continue
 
             if _recently_marked(db, active_session.id, sid, Config.COOLDOWN_MINUTES):
+                if debug:
+                    debug_faces.append({
+                        "bbox": bbox,
+                        "det_score": float(det_score),
+                        "blur_score": float(blur_score(face)),
+                        "liveness": liveness,
+                        "top_k": recognizer.top_k(emb, k=debug_top_k),
+                        "skipped_reason": "cooldown",
+                        "matched_student_id": sid,
+                        "similarity": float(sim),
+                    })
                 continue
 
             matched_ids.add(sid)
@@ -314,14 +391,32 @@ def scan_image():
                 "liveness_score": float(liveness.get("score", 0.0)),
                 "liveness_pass": bool(liveness.get("pass", False)),
             })
+            if debug:
+                debug_faces.append({
+                    "bbox": bbox,
+                    "det_score": float(det_score),
+                    "blur_score": float(blur_score(face)),
+                    "liveness": liveness,
+                    "top_k": recognizer.top_k(emb, k=debug_top_k),
+                    "matched_student_id": sid,
+                    "similarity": float(sim),
+                    "skipped_reason": None,
+                })
 
-        return {
+        resp = {
             "ok": True,
             "detected_faces": int(len(faces)),
             "matched_count": int(len(matched_ids)),
             "student_ids": list(matched_ids),
             "matches": matches,
-        }, 200
+        }
+        if debug:
+            resp["debug"] = {
+                "threshold": threshold,
+                "blur_threshold": blur_threshold,
+                "faces": debug_faces or [],
+            }
+        return resp, 200
 
     finally:
         db.close()
@@ -341,6 +436,15 @@ def benchmark():
     """
     threshold = float(request.form.get("threshold") or 0.4)
     blur_threshold = float(request.form.get("blur_threshold") or Config.BLUR_THRESHOLD)
+    debug = str(request.form.get("debug") or "").strip().lower() in ("1", "true", "yes", "on")
+    debug_top_k = int(request.form.get("debug_top_k") or 5)
+    liveness_override = str(request.form.get("liveness") or "").strip().lower()
+    if liveness_override in ("1", "true", "yes", "on"):
+        liveness_enabled = True
+    elif liveness_override in ("0", "false", "no", "off"):
+        liveness_enabled = False
+    else:
+        liveness_enabled = Config.LIVENESS_ENABLED and Config.LIVENESS_ATTENDANCE_ENABLED
     course_id = (request.form.get("course_id") or "").strip() or None
 
     if "image" not in request.files:
@@ -362,30 +466,76 @@ def benchmark():
 
     matched_ids = set()
     matches = []
+    debug_faces = [] if debug else None
 
     db = SessionLocal()
     try:
         for emb, bbox, det_score, landmarks in faces:
             if det_score < Config.OPENCV_DET_THRESH:
+                if debug:
+                    debug_faces.append({"bbox": bbox, "det_score": float(det_score), "skipped_reason": "low_det_score"})
                 continue
             face = crop_face_xyxy(image, bbox)
             if blur_score(face) < blur_threshold:
+                if debug:
+                    debug_faces.append({
+                        "bbox": bbox,
+                        "det_score": float(det_score),
+                        "blur_score": float(blur_score(face)),
+                        "skipped_reason": "blur",
+                    })
                 continue
 
-            liveness = evaluate_liveness(image, bbox, landmarks) if Config.LIVENESS_ENABLED else {"checked": False}
-            if Config.LIVENESS_ENABLED:
+            liveness = evaluate_liveness(image, bbox, landmarks) if liveness_enabled else {"checked": False}
+            if liveness_enabled:
                 if not liveness.get("checked") and Config.LIVENESS_REQUIRED:
+                    if debug:
+                        debug_faces.append({
+                            "bbox": bbox,
+                            "det_score": float(det_score),
+                            "blur_score": float(blur_score(face)),
+                            "liveness": liveness,
+                            "skipped_reason": "liveness_unavailable",
+                        })
                     continue
                 if liveness.get("checked") and not liveness.get("pass"):
+                    if debug:
+                        debug_faces.append({
+                            "bbox": bbox,
+                            "det_score": float(det_score),
+                            "blur_score": float(blur_score(face)),
+                            "liveness": liveness,
+                            "skipped_reason": "liveness_failed",
+                        })
                     continue
 
             sid, sim = recognizer.recognize_embedding(emb)
             if not sid:
+                if debug:
+                    debug_faces.append({
+                        "bbox": bbox,
+                        "det_score": float(det_score),
+                        "blur_score": float(blur_score(face)),
+                        "liveness": liveness,
+                        "top_k": recognizer.top_k(emb, k=debug_top_k),
+                        "skipped_reason": "below_threshold",
+                    })
                 continue
 
             # optional: only count enrolled students for a given course
             if course_id:
                 if not _is_enrolled(db, sid, course_id):
+                    if debug:
+                        debug_faces.append({
+                            "bbox": bbox,
+                            "det_score": float(det_score),
+                            "blur_score": float(blur_score(face)),
+                            "liveness": liveness,
+                            "top_k": recognizer.top_k(emb, k=debug_top_k),
+                            "skipped_reason": "not_enrolled",
+                            "matched_student_id": sid,
+                            "similarity": float(sim),
+                        })
                     continue
 
             matched_ids.add(sid)
@@ -396,12 +546,23 @@ def benchmark():
                 "liveness_score": float(liveness.get("score", 0.0)),
                 "liveness_pass": bool(liveness.get("pass", False)),
             })
+            if debug:
+                debug_faces.append({
+                    "bbox": bbox,
+                    "det_score": float(det_score),
+                    "blur_score": float(blur_score(face)),
+                    "liveness": liveness,
+                    "top_k": recognizer.top_k(emb, k=debug_top_k),
+                    "matched_student_id": sid,
+                    "similarity": float(sim),
+                    "skipped_reason": None,
+                })
     finally:
         db.close()
 
     t_match = time.perf_counter()
 
-    return {
+    resp = {
         "ok": True,
         "detected_faces": int(len(faces)),
         "matched_count": int(len(matched_ids)),
@@ -414,7 +575,12 @@ def benchmark():
             "total": round((t_match - t0) * 1000, 2),
         },
         "matches": matches,
-    }, 200
+    }
+    if debug:
+        resp["debug"] = {
+            "faces": debug_faces or [],
+        }
+    return resp, 200
 
 
 @bp.post("/manual")

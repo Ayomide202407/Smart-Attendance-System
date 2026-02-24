@@ -3,7 +3,19 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy.exc import IntegrityError
 
 from database.engine import SessionLocal
-from database.models import User
+from database.models import (
+    User,
+    Course,
+    Session,
+    Enrollment,
+    Attendance,
+    AttendanceAudit,
+    AttendanceDispute,
+    FaceEmbedding,
+    StudentPlan,
+    ScheduleNotification,
+)
+from utils.embeddings import delete_student_face_data
 from routes.meta import DEPARTMENTS
 from config import Config
 
@@ -138,5 +150,145 @@ def login():
 
     except Exception as e:
         return _json_error(f"Login failed: {str(e)}", 500)
+    finally:
+        db.close()
+
+
+@bp.post("/delete-user")
+def delete_user():
+    """
+    POST /auth/delete-user
+    Body JSON:
+    {
+      "user_id": "...",          # preferred
+      "identifier": "...",       # optional alternative
+      "confirm": "DELETE"
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id") or "").strip()
+    identifier = str(data.get("identifier") or "").strip()
+    confirm = str(data.get("confirm") or "").strip()
+
+    if confirm != "DELETE":
+        return _json_error('Missing or invalid confirm. Send confirm="DELETE" to proceed.', 400)
+    if not user_id and not identifier:
+        return _json_error("Provide user_id or identifier", 400)
+
+    db = SessionLocal()
+    try:
+        user = None
+        if user_id:
+            user = db.query(User).filter(User.id == user_id).first()
+        if not user and identifier:
+            user = db.query(User).filter(User.identifier == identifier).first()
+        if not user:
+            return _json_error("User not found", 404)
+
+        courses = []
+        course_ids = []
+        session_ids = []
+        if user.role == "lecturer":
+            courses = db.query(Course).filter(Course.lecturer_id == user.id).all()
+            course_ids = [c.id for c in courses]
+            if course_ids:
+                session_ids = [s.id for s in db.query(Session).filter(Session.course_id.in_(course_ids)).all()]
+
+        deleted = {}
+
+        # Disputes
+        deleted["disputes_student"] = (
+            db.query(AttendanceDispute)
+            .filter(AttendanceDispute.student_id == user.id)
+            .delete()
+        )
+        deleted["disputes_resolver"] = (
+            db.query(AttendanceDispute)
+            .filter(AttendanceDispute.resolver_id == user.id)
+            .delete()
+        )
+        if course_ids:
+            deleted["disputes_course"] = (
+                db.query(AttendanceDispute)
+                .filter(AttendanceDispute.course_id.in_(course_ids))
+                .delete(synchronize_session=False)
+            )
+        else:
+            deleted["disputes_course"] = 0
+
+        # Attendance + audits
+        deleted["attendance"] = (
+            db.query(Attendance)
+            .filter(Attendance.student_id == user.id)
+            .delete()
+        )
+        deleted["audits_student"] = (
+            db.query(AttendanceAudit)
+            .filter(AttendanceAudit.student_id == user.id)
+            .delete()
+        )
+        deleted["audits_lecturer"] = (
+            db.query(AttendanceAudit)
+            .filter(AttendanceAudit.lecturer_id == user.id)
+            .delete()
+        )
+        if session_ids:
+            deleted["audits_sessions"] = (
+                db.query(AttendanceAudit)
+                .filter(AttendanceAudit.session_id.in_(session_ids))
+                .delete(synchronize_session=False)
+            )
+        else:
+            deleted["audits_sessions"] = 0
+
+        # Enrollments, plans, notifications
+        deleted["enrollments"] = (
+            db.query(Enrollment)
+            .filter(Enrollment.student_id == user.id)
+            .delete()
+        )
+        deleted["plans"] = (
+            db.query(StudentPlan)
+            .filter(StudentPlan.student_id == user.id)
+            .delete()
+        )
+        deleted["notifications"] = (
+            db.query(ScheduleNotification)
+            .filter(ScheduleNotification.student_id == user.id)
+            .delete()
+        )
+
+        # Face embeddings rows (files removed after commit)
+        deleted["face_embeddings"] = (
+            db.query(FaceEmbedding)
+            .filter(FaceEmbedding.student_id == user.id)
+            .delete()
+        )
+
+        # Lecturer-owned courses (ORM delete to honor cascades)
+        deleted_courses = 0
+        for course in courses:
+            db.delete(course)
+            deleted_courses += 1
+        deleted["courses"] = deleted_courses
+
+        db.delete(user)
+        db.commit()
+
+        deleted_files = {"embeddings_deleted": 0, "faces_deleted": 0}
+        if user.role == "student":
+            deleted_files = delete_student_face_data(user.id)
+
+        return {
+            "ok": True,
+            "message": "User deleted",
+            "user_id": user.id,
+            "deleted": deleted,
+            "deleted_files": deleted_files,
+        }, 200
+
+    except Exception as e:
+        db.rollback()
+        return _json_error(f"Delete user failed: {str(e)}", 500)
     finally:
         db.close()

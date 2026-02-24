@@ -5,10 +5,12 @@ from sqlalchemy import (
     Column,
     String,
     DateTime,
+    Date,
     ForeignKey,
     Float,
     Boolean,
     UniqueConstraint,
+    Integer,
 )
 from sqlalchemy.orm import relationship
 
@@ -52,6 +54,9 @@ class User(Base):
     # Student -> embeddings
     face_embeddings = relationship("FaceEmbedding", back_populates="student", cascade="all, delete-orphan")
 
+    # Student -> planner items
+    planner_items = relationship("StudentPlan", back_populates="student", cascade="all, delete-orphan")
+
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}"
@@ -88,6 +93,9 @@ class Course(Base):
     enrollments = relationship("Enrollment", back_populates="course", cascade="all, delete-orphan")
 
     sessions = relationship("Session", back_populates="course", cascade="all, delete-orphan")
+
+    schedules = relationship("CourseSchedule", back_populates="course", cascade="all, delete-orphan")
+    planner_items = relationship("StudentPlan", back_populates="course", cascade="all, delete-orphan")
 
 
 # =========================
@@ -152,6 +160,35 @@ class Session(Base):
 
     attendance_records = relationship(
         "Attendance", back_populates="session", cascade="all, delete-orphan"
+    )
+
+
+# =========================
+# COURSE SCHEDULES
+# =========================
+class CourseSchedule(Base):
+    """
+    Weekly schedule for a course.
+    day_of_week: 0=Monday ... 6=Sunday
+    start_time: "HH:MM" 24h format
+    duration_minutes: integer minutes
+    """
+    __tablename__ = "course_schedules"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    course_id = Column(String, ForeignKey("courses.id"), nullable=False)
+    day_of_week = Column(Integer, nullable=False)
+    start_time = Column(String, nullable=False)
+    duration_minutes = Column(Integer, nullable=False, default=60)
+    location = Column(String, nullable=True)
+    is_recurring = Column(Boolean, default=True)
+    schedule_date = Column(Date, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    course = relationship("Course", back_populates="schedules")
+
+    __table_args__ = (
+        UniqueConstraint("course_id", "day_of_week", "start_time", "schedule_date", "is_recurring", name="uq_course_schedule_slot"),
     )
 
 
@@ -235,6 +272,48 @@ class AttendanceDispute(Base):
     __table_args__ = (
         UniqueConstraint("session_id", "student_id", "status", name="uq_dispute_session_student_status"),
     )
+
+
+# =========================
+# SCHEDULE NOTIFICATIONS
+# =========================
+class ScheduleNotification(Base):
+    """
+    Schedule change notifications for students.
+    """
+    __tablename__ = "schedule_notifications"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    student_id = Column(String, ForeignKey("users.id"), nullable=False)
+    course_id = Column(String, ForeignKey("courses.id"), nullable=False)
+    message = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_read = Column(Boolean, default=False)
+
+
+# =========================
+# STUDENT PLANNER
+# =========================
+class StudentPlan(Base):
+    """
+    Personal planner items for students.
+    """
+    __tablename__ = "student_plans"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    student_id = Column(String, ForeignKey("users.id"), nullable=False)
+    course_id = Column(String, ForeignKey("courses.id"), nullable=True)
+
+    item_type = Column(String, nullable=False)  # study | tutorial | reading | project | research | other
+    title = Column(String, nullable=True)
+    start_time = Column(DateTime, nullable=False)
+    duration_minutes = Column(Integer, nullable=False, default=60)
+    status = Column(String, default="planned")  # planned | completed | missed
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    student = relationship("User", back_populates="planner_items")
+    course = relationship("Course", back_populates="planner_items")
 
 
 # =========================

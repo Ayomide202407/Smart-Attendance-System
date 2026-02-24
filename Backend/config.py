@@ -28,6 +28,7 @@ class Config:
     OPENCV_REC_MODEL = os.getenv("OPENCV_REC_MODEL", "models/face_recognition_sface_2021dec.onnx")
     OPENCV_DET_SIZE = int(os.getenv("OPENCV_DET_SIZE", "640"))
     OPENCV_DET_THRESH = float(os.getenv("OPENCV_DET_THRESH", "0.6"))
+    OPENCV_NMS_THRESH = float(os.getenv("OPENCV_NMS_THRESH", "0.45"))
 
     # Liveness (heuristic checks)
     LIVENESS_ENABLED = os.getenv("LIVENESS_ENABLED", "1") == "1"
@@ -36,3 +37,6 @@ class Config:
     LIVENESS_MIN_FACE_RATIO = float(os.getenv("LIVENESS_MIN_FACE_RATIO", "0.03"))
     LIVENESS_MIN_EYE_DIST_RATIO = float(os.getenv("LIVENESS_MIN_EYE_DIST_RATIO", "0.25"))
     LIVENESS_CHALLENGE_SHIFT = float(os.getenv("LIVENESS_CHALLENGE_SHIFT", "0.08"))
+
+    # Attendance scans: disable liveness by default for large class photos
+    LIVENESS_ATTENDANCE_ENABLED = os.getenv("LIVENESS_ATTENDANCE_ENABLED", "0") == "1"

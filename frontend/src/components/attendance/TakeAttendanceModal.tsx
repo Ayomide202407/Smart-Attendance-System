@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { apiRequest } from "@/lib/api";
 import { endpoints } from "@/lib/endpoints";
@@ -40,6 +41,7 @@ export default function TakeAttendanceModal({
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [markedIds, setMarkedIds] = useState<Set<string>>(new Set());
   const [lastMatched, setLastMatched] = useState<string[]>([]);
+  const [scanStats, setScanStats] = useState<{ detectedFaces?: number; matchedCount?: number } | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -48,6 +50,7 @@ export default function TakeAttendanceModal({
       setStudents([]);
       setMarkedIds(new Set());
       setLastMatched([]);
+      setScanStats(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -100,6 +103,17 @@ export default function TakeAttendanceModal({
     setLiveOn(false);
   }
 
+  function summarizeSkips(skipped: any[]) {
+    if (!Array.isArray(skipped) || skipped.length === 0) return "";
+    const counts: Record<string, number> = {};
+    skipped.forEach((s) => {
+      const reason = String(s?.reason || "unknown");
+      counts[reason] = (counts[reason] || 0) + 1;
+    });
+    const parts = Object.entries(counts).map(([reason, count]) => `${reason.replace(/_/g, " ")}: ${count}`);
+    return parts.length ? ` Skipped (${parts.join(", ")}).` : "";
+  }
+
   async function scanAndMark(blob: Blob, method: "live_video" | "image_upload") {
     const fd = new FormData();
     fd.append("lecturer_id", lecturerId);
@@ -120,10 +134,26 @@ export default function TakeAttendanceModal({
       throw new Error(scanData?.error || `Scan failed (HTTP ${scanRes.status})`);
     }
 
+    const detectedFaces = scanData?.detected_faces;
+    const matchedCount = scanData?.matched_count;
+    setScanStats({ detectedFaces, matchedCount });
     const studentIds: string[] = scanData?.student_ids ?? [];
+    const confidenceMap: Record<string, number> = {};
+    const matches: Array<{ student_id: string; similarity: number }> = scanData?.matches ?? [];
+    matches.forEach((m) => {
+      if (m?.student_id && typeof m.similarity === "number") {
+        confidenceMap[m.student_id] = m.similarity;
+      }
+    });
     setLastMatched(studentIds);
     if (studentIds.length === 0) {
-      setStatus("No enrolled student faces matched in this frame/photo.");
+      if (typeof detectedFaces === "number" && detectedFaces === 0) {
+        setStatus("No faces detected. Improve lighting and keep faces visible.");
+      } else if (typeof detectedFaces === "number") {
+        setStatus(`Faces detected: ${detectedFaces}, but no enrolled students matched.`);
+      } else {
+        setStatus("No enrolled student faces matched in this frame/photo.");
+      }
       return;
     }
 
@@ -134,7 +164,7 @@ export default function TakeAttendanceModal({
         course_id: courseId,
         method,
         student_ids: studentIds,
-        confidence: null,
+        confidences: confidenceMap,
       },
     });
 
@@ -148,10 +178,11 @@ export default function TakeAttendanceModal({
       return next;
     });
 
+    const skippedInfo = summarizeSkips(markRes?.skipped ?? []);
     setStatus(
-      `Marked ${markRes?.marked_count ?? 0} student(s). Skipped ${
-        markRes?.skipped_count ?? 0
-      }. Total marked: ${totalMarked + newlyMarked.length}.`
+      `Marked ${markRes?.marked_count ?? 0} student(s). Total marked: ${
+        totalMarked + newlyMarked.length
+      }.${skippedInfo}`
     );
   }
 
@@ -229,8 +260,8 @@ export default function TakeAttendanceModal({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-3xl rounded-2xl bg-white border shadow-lg overflow-hidden">
         <div className="p-5 border-b flex items-start justify-between gap-4">
           <div>
@@ -319,6 +350,11 @@ export default function TakeAttendanceModal({
                   {lastMatched.length} student(s) matched in last scan.
                 </p>
               )}
+              {scanStats && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Faces detected: {scanStats.detectedFaces ?? "-"} · Matched: {scanStats.matchedCount ?? "-"}
+                </p>
+              )}
             </div>
           </div>
 
@@ -365,6 +401,7 @@ export default function TakeAttendanceModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
