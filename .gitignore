@@ -19,3 +19,6 @@ Backend/dataset/
 Backend/embeddings/
 Backend/exports/
 
+
+# Vite cache
+frontend/.vite/
