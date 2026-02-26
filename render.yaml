@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r Backend/requirements.txt
-    startCommand: gunicorn --chdir Backend app:app --bind 0.0.0.0:$PORT
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     envVars:
       - key: FLASK_DEBUG
         value: "0"
