@@ -11,6 +11,7 @@ class Config:
 
     # CORS
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+    CORS_SUPPORTS_CREDENTIALS = os.getenv("CORS_SUPPORTS_CREDENTIALS", "0") == "1"
 
     # Lecturer registration gate (optional)
     # If set, lecturers must provide this code during registration.

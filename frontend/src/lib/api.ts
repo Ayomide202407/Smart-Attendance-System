@@ -15,7 +15,6 @@ export async function apiRequest<T = any>(
 
   const res = await fetch(`${API_BASE_URL}${endpoint}`, {
     method: rest.method || "GET",
-    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(headers || {}),
@@ -66,7 +65,6 @@ export async function api<T = any>(
   options: RequestInit = {}
 ): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${endpoint}`, {
-    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {}),
