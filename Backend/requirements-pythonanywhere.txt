@@ -1,0 +1,10 @@
+flask
+flask-cors
+sqlalchemy
+werkzeug
+numpy
+opencv-contrib-python-headless
+requests
+reportlab
+gunicorn
+psycopg2-binary
